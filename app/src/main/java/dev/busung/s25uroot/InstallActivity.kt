@@ -87,6 +87,7 @@ class InstallActivity : ComponentActivity() {
                 InstallScreen(
                     installState = installState,
                     onRetry = { installViewModel.install(profileId) },
+                    onApplyModules = installViewModel::applyModules,
                     onClose = ::finish,
                 )
             }
@@ -126,6 +127,7 @@ private fun clickHaptic(view: View) {
 private fun InstallScreen(
     installState: InstallUiState,
     onRetry: () -> Unit,
+    onApplyModules: () -> Unit,
     onClose: () -> Unit,
 ) {
     val logScrollState = rememberScrollState()
@@ -196,12 +198,21 @@ private fun InstallScreen(
                             Text(stringResource(R.string.action_retry))
                         }
                     } else if (installState.phase == InstallPhase.Installed) {
+                        FilledTonalButton(
+                            onClick = {
+                                clickHaptic(view)
+                                onApplyModules()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(stringResource(R.string.action_apply_modules))
+                        }
                         Button(
                             onClick = {
                                 clickHaptic(view)
                                 onClose()
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                         ) {
                             Text(stringResource(R.string.action_done))
                         }

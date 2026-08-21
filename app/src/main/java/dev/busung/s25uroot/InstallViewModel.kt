@@ -171,6 +171,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
                 appendLog(app.getString(R.string.log_install_complete))
                 finishHistory(InstallRunResult.Succeeded)
+                if (AppPreferences.autoApplyModules(app)) {
+                    applyModulesInternal()
+                }
             } catch (error: Throwable) {
                 appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
@@ -329,6 +332,44 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         if (lateLoad.output.isNotBlank()) appendLog(lateLoad.output)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
+
+        // Register ADB key for root-on-boot (one-time, persists across reboots)
+        if (!AppPreferences.adbPaired(app)) {
+            val helperPath = stagedHelperPath ?: helperFile().absolutePath
+            if (AdbPairing.registerKeyViaRoot(app, helperPath)) {
+                AppPreferences.setAdbPaired(app, true)
+                appendLog(app.getString(R.string.adb_pair_success))
+            }
+        }
+    }
+
+    /**
+     * Mounts KernelSU modules and restarts zygote so Zygisk-based modules
+     * (LSPosed, etc.) inject into the fresh zygote process. Causes a ~5s
+     * soft-reboot: lockscreen reappears, kernel and root persist.
+     */
+    fun applyModules() {
+        if (installJob?.isActive == true) return
+        if (!detectInstalled()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            applyModulesInternal()
+        }
+    }
+
+    private fun applyModulesInternal() {
+        appendLog(app.getString(R.string.log_modules_applying))
+        val mount = runHelper("-c", "/data/adb/ksu/bin/ksud module mount")
+        if (mount.code == 0) {
+            appendLog(app.getString(R.string.log_modules_mounted))
+        } else {
+            appendLog("[!] ksud module mount: ${mount.output}")
+        }
+        val restart = runHelper("-c", "setprop ctl.restart zygote")
+        if (restart.code == 0) {
+            appendLog(app.getString(R.string.log_modules_zygote_restarted))
+        } else {
+            appendLog("[-] ${app.getString(R.string.error_modules_restart, restart.output)}")
+        }
     }
 
     private fun detectInstalled(): Boolean {

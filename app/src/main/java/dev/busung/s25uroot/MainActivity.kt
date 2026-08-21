@@ -78,6 +78,8 @@ import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SystemUpdate
@@ -85,6 +87,7 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material.icons.rounded.Warning
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonGroupDefaults
@@ -1420,10 +1423,57 @@ private fun SettingsPage(
     var showColorDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showShizukuMissingDialog by remember { mutableStateOf(false) }
+    var showAdbPairingDialog by remember { mutableStateOf(false) }
     var languageMenuTop by remember { mutableStateOf(32.dp) }
     var colorMenuTop by remember { mutableStateOf(32.dp) }
     val density = LocalDensity.current
     val currentLanguageTag = AppPreferences.languageTag(context)
+
+    if (showAdbPairingDialog) {
+        val paired = AppPreferences.adbPaired(context)
+        val hasPermission = AdbPairing.hasWriteSecureSettings(context)
+        AlertDialog(
+            onDismissRequest = { showAdbPairingDialog = false },
+            icon = { Icon(Icons.Rounded.Wifi, contentDescription = null) },
+            title = {
+                DialogDimAmount(0.34f)
+                Text(stringResource(R.string.adb_pair_title))
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.adb_pair_instructions))
+                    Text(
+                        text = if (paired) {
+                            stringResource(R.string.adb_pair_status_paired)
+                        } else {
+                            stringResource(R.string.adb_pair_status_not_paired)
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (paired) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                    if (!hasPermission) {
+                        Text(
+                            text = stringResource(R.string.adb_pair_permission_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    clickHaptic(view)
+                    showAdbPairingDialog = false
+                }) {
+                    Text(stringResource(R.string.action_close))
+                }
+            },
+        )
+    }
 
     if (showShizukuMissingDialog) {
         AlertDialog(
@@ -1573,6 +1623,48 @@ private fun SettingsPage(
                     onAdvancedModeChanged(it)
                 },
             )
+        }
+        item { SectionLabel(stringResource(R.string.section_root_on_boot)) }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                SettingsSwitchCard(
+                    icon = Icons.Rounded.Refresh,
+                    title = stringResource(R.string.pref_auto_apply_modules),
+                    description = stringResource(R.string.pref_auto_apply_modules_summary),
+                    checked = AppPreferences.autoApplyModules(context),
+                    position = SettingsCardPosition.Top,
+                    onCheckedChange = {
+                        clickHaptic(view)
+                        AppPreferences.setAutoApplyModules(context, it)
+                    },
+                )
+                SettingsSwitchCard(
+                    icon = Icons.Rounded.PowerSettingsNew,
+                    title = stringResource(R.string.pref_auto_root_boot),
+                    description = stringResource(R.string.pref_auto_root_boot_summary),
+                    checked = AppPreferences.autoRootOnBoot(context),
+                    position = SettingsCardPosition.Middle,
+                    onCheckedChange = {
+                        clickHaptic(view)
+                        AppPreferences.setAutoRootOnBoot(context, it)
+                    },
+                )
+                SettingsCard(
+                    icon = Icons.Rounded.Wifi,
+                    title = stringResource(R.string.pref_adb_pairing),
+                    description = stringResource(R.string.pref_adb_pairing_summary),
+                    value = if (AppPreferences.adbPaired(context)) {
+                        stringResource(R.string.adb_pair_status_paired)
+                    } else {
+                        stringResource(R.string.adb_pair_status_not_paired)
+                    },
+                    position = SettingsCardPosition.Bottom,
+                    onClick = {
+                        clickHaptic(view)
+                        showAdbPairingDialog = true
+                    },
+                )
+            }
         }
         item { SectionLabel(stringResource(R.string.about)) }
         item {
