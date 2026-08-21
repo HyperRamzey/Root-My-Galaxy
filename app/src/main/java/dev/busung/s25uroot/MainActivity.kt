@@ -1431,7 +1431,6 @@ private fun SettingsPage(
 
     if (showAdbPairingDialog) {
         val paired = AppPreferences.adbPaired(context)
-        val hasPermission = AdbPairing.hasWriteSecureSettings(context)
         AlertDialog(
             onDismissRequest = { showAdbPairingDialog = false },
             icon = { Icon(Icons.Rounded.Wifi, contentDescription = null) },
@@ -1455,16 +1454,18 @@ private fun SettingsPage(
                             MaterialTheme.colorScheme.error
                         },
                     )
-                    if (!hasPermission) {
-                        Text(
-                            text = stringResource(R.string.adb_pair_permission_note),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
             },
             confirmButton = {
+                FilledTonalButton(onClick = {
+                    clickHaptic(view)
+                    showAdbPairingDialog = false
+                    context.startForegroundService(AdbPairingService.startIntent(context))
+                }) {
+                    Text(stringResource(R.string.adb_pair_button))
+                }
+            },
+            dismissButton = {
                 TextButton(onClick = {
                     clickHaptic(view)
                     showAdbPairingDialog = false

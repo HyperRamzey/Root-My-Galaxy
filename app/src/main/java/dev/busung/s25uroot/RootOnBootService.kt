@@ -63,15 +63,14 @@ class RootOnBootService : Service() {
             }
         }
 
-        // 2. Wait for adbd to listen on TCP
-        val port = AdbPairing.getAdbPort()
-        waitForAdbd(port)
+        // 2. Discover the wireless-debugging connect port via mDNS
+        val port = discoverPortWithRetry()
+        check(port > 0) { "Wireless debugging connect port not found via mDNS" }
 
-        // 3. Verify connectivity
-        val keyDir = File(filesDir, "adb_keys")
-        check(AdbPairing.testConnection(this)) {
-            "Could not authenticate to local adbd (ADB key not registered?)"
-        }
+        // 3. Connect via STLS
+        val keyManager = AdbKeyManager(this)
+        val client = LocalAdbClient("127.0.0.1", port, keyManager)
+        client.connect()
 
         // 4. Resolve target and stage payloads
         val profile = PayloadRepository(this).resolveTarget(DeviceSnapshot.current())
@@ -87,9 +86,9 @@ class RootOnBootService : Service() {
         val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
         val remoteKsud = "/data/local/tmp/ksud-s25u-kdp"
 
-        LocalAdbClient.push("127.0.0.1", port, exploit, remoteExploit, 0b111101101, keyDir)
-        LocalAdbClient.push("127.0.0.1", port, rootHelper, remoteHelper, 0b111101101, keyDir)
-        LocalAdbClient.push("127.0.0.1", port, ksud, remoteKsud, 0b111101101, keyDir)
+        client.push(exploit, remoteExploit)
+        client.push(rootHelper, remoteHelper)
+        client.push(ksud, remoteKsud)
 
         // 5. Run the exploit (one attempt per boot)
         val exploitCmd = buildString {
@@ -99,33 +98,29 @@ class RootOnBootService : Service() {
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
             append("$remoteHelper --run-payload $remoteExploit $remoteHelper /data/local/tmp/f946b.log")
         }
-        val exploitResult = LocalAdbClient.shell("127.0.0.1", port, exploitCmd, keyDir)
+        val exploitResult = client.shell(exploitCmd)
         check(exploitResult.output.contains("exploit completed") || exploitResult.output.contains("slide-kaslr-ok")) {
             "Exploit did not succeed this boot: ${exploitResult.output.takeLast(200)}"
         }
 
         // 6. Load KernelSU
-        val lateLoad = LocalAdbClient.shell("127.0.0.1", port, "$remoteHelper --late-load", keyDir)
+        val lateLoad = client.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
         // 7. Mount modules + restart zygote
-        LocalAdbClient.shell("127.0.0.1", port, "/data/adb/ksu/bin/ksud module mount", keyDir)
-        LocalAdbClient.shell("127.0.0.1", port, "setprop ctl.restart zygote", keyDir)
+        client.shell("/data/adb/ksu/bin/ksud module mount")
+        client.shell("setprop ctl.restart zygote")
+        client.close()
     }
 
-    private fun waitForAdbd(port: Int, timeoutMs: Long = 60_000) {
+    private fun discoverPortWithRetry(timeoutMs: Long = 60_000): Int {
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < deadline) {
-            try {
-                java.net.Socket().use { socket ->
-                    socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 1_000)
-                    return
-                }
-            } catch (e: Exception) {
-                Thread.sleep(2_000)
-            }
+            val port = AdbPairing.discoverConnectPort(this, timeoutMs = 10_000)
+            if (port > 0) return port
+            Thread.sleep(3_000)
         }
-        error("adbd did not start listening on port $port within ${timeoutMs / 1000}s")
+        return -1
     }
 
     private fun startInForeground() {

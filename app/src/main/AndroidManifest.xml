@@ -64,5 +64,10 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="specialUse" />
+        <service
+            android:name=".AdbPairingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
     </application>
 </manifest>

@@ -333,14 +333,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
 
-        // Register ADB key for root-on-boot (one-time, persists across reboots)
-        if (!AppPreferences.adbPaired(app)) {
-            val helperPath = stagedHelperPath ?: helperFile().absolutePath
-            if (AdbPairing.registerKeyViaRoot(app, helperPath)) {
-                AppPreferences.setAdbPaired(app, true)
-                appendLog(app.getString(R.string.adb_pair_success))
-            }
-        }
+        // Ensure ADB key exists for root-on-boot pairing
+        AdbKeyManager(app)
     }
 
     /**
