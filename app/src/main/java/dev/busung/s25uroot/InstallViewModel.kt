@@ -163,7 +163,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 appendLog(app.getString(R.string.log_download_verified))
 
                 setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit_running))
-                executeExploit(payloads.exploit)
+                executeExploit(payloads)
 
                 setPhase(InstallPhase.LoadingKernelSu, app.getString(R.string.status_ksu_loading))
                 installKernelSu(payloads)
@@ -179,7 +179,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun executeExploit(payload: File) {
+    private suspend fun executeExploit(payloads: VerifiedPayloads) {
+        val payload = payloads.exploit
+        val profile = payloads.profile
         val shizuku = shizukuEnabled()
         val logFile = if (shizuku) File(SHIZUKU_LOG_PATH) else File(app.filesDir, "exploit.log")
         if (shizuku) {
@@ -187,7 +189,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         } else {
             logFile.delete()
         }
-        val helper = helperFile()
+        val helper = if (payloads.rootHelper != null && shizuku) {
+            val staged = shizukuStage(payloads.rootHelper, SHIZUKU_HELPER_PATH, "755")
+            stagedHelperPath = staged.absolutePath
+            staged
+        } else {
+            helperFile()
+        }
         if (!shizuku) {
             require(helper.canExecute()) { app.getString(R.string.error_helper_unavailable) }
         }
@@ -197,7 +205,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             val stagedPayload = shizukuStage(payload, SHIZUKU_PAYLOAD_PATH, "755")
             ShizukuController.exec(
                 arrayOf("/system/bin/sh", "-c", "true"),
-                shizukuEnvironment(bootToken, stagedPayload.absolutePath, helper.absolutePath),
+                shizukuEnvironment(bootToken, stagedPayload.absolutePath, helper.absolutePath, profile.slideSource),
             )
         } else {
             val processBuilder = ProcessBuilder(
@@ -211,6 +219,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 put("EXPLOIT_ATTEMPTS", EXPLOIT_ATTEMPTS)
                 put("P0_ATTEMPT_TIMEOUT_SEC", P0_ATTEMPT_TIMEOUT_SEC)
                 put("EXPLOIT_ATTEMPT_TIMEOUT_SEC", EXPLOIT_ATTEMPT_TIMEOUT_SEC)
+                profile.slideSource?.let { put("SLIDE_SOURCE", it) }
                 cachedP0Offset(bootToken)?.let { put(P0_OFFSET_ENV, it) }
             }
             processBuilder.start()
@@ -370,9 +379,12 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             .apply()
     }
 
+    private var stagedHelperPath: String? = null
+
     private fun helperFile(): File =
         if (shizukuEnabled()) {
-            shizukuStage(nativeHelperFile(), SHIZUKU_HELPER_PATH, "755")
+            stagedHelperPath?.let { File(it) }
+                ?: shizukuStage(nativeHelperFile(), SHIZUKU_HELPER_PATH, "755")
         } else {
             nativeHelperFile()
         }
@@ -399,12 +411,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         bootToken: String?,
         payloadPath: String,
         helperPath: String,
+        slideSource: String? = null,
     ): Array<String> = buildList {
         add("EXPLOIT_ATTEMPTS=$EXPLOIT_ATTEMPTS")
         add("P0_ATTEMPT_TIMEOUT_SEC=$P0_ATTEMPT_TIMEOUT_SEC")
         add("EXPLOIT_ATTEMPT_TIMEOUT_SEC=$EXPLOIT_ATTEMPT_TIMEOUT_SEC")
         add("CVE43499_ROOT_HELPER=$helperPath")
         add("LD_PRELOAD=$payloadPath")
+        slideSource?.let { add("SLIDE_SOURCE=$it") }
         cachedP0Offset(bootToken)?.let { add("$P0_OFFSET_ENV=$it") }
     }.toTypedArray()
 

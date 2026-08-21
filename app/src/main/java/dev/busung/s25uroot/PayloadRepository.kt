@@ -13,6 +13,7 @@ data class VerifiedPayloads(
     val profile: TargetProfile,
     val exploit: File,
     val kernelSu: File,
+    val rootHelper: File? = null,
 )
 
 class PayloadRepository(private val context: Context) {
@@ -22,6 +23,7 @@ class PayloadRepository(private val context: Context) {
         return SupportManifest.parse(manifestBytes).targets.map { profile -> profile.copy(
             exploit = profile.exploit.copy(url = pinArtifactUrl(profile.exploit.url, commit)),
             kernelSu = profile.kernelSu.copy(url = pinArtifactUrl(profile.kernelSu.url, commit)),
+            rootHelper = profile.rootHelper?.copy(url = pinArtifactUrl(profile.rootHelper.url, commit)),
         ) }
     }
 
@@ -49,7 +51,17 @@ class PayloadRepository(private val context: Context) {
         )
         Os.chmod(exploit.absolutePath, 0b100100100)
         Os.chmod(kernelSu.absolutePath, 0b100100100)
-        return VerifiedPayloads(profile, exploit, kernelSu)
+        val rootHelper = profile.rootHelper?.let { helper ->
+            val file = downloadArtifact(
+                helper,
+                File(directory, "cve-2026-43499-root"),
+                context.getString(R.string.artifact_exploit),
+                onProgress,
+            )
+            Os.chmod(file.absolutePath, 0b100100100)
+            file
+        }
+        return VerifiedPayloads(profile, exploit, kernelSu, rootHelper)
     }
 
     private fun downloadArtifact(
@@ -137,9 +149,9 @@ class PayloadRepository(private val context: Context) {
 
     companion object {
         private const val COMMIT_API_URL =
-            "https://api.github.com/repos/BuSung-dev/Root-My-Galaxy-Payloads/git/ref/heads/main"
+            "https://api.github.com/repos/HyperRamzey/Root-My-Galaxy-Payloads/git/ref/heads/main"
         private const val RAW_REPOSITORY =
-            "https://raw.githubusercontent.com/BuSung-dev/Root-My-Galaxy-Payloads"
+            "https://raw.githubusercontent.com/HyperRamzey/Root-My-Galaxy-Payloads"
         private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/main/"
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
         private const val MAX_MANIFEST_BYTES = 256 * 1024

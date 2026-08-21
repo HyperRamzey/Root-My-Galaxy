@@ -15,6 +15,8 @@ data class TargetProfile(
     val kernelVersions: Set<String>,
     val exploit: RemoteArtifact,
     val kernelSu: RemoteArtifact,
+    val rootHelper: RemoteArtifact? = null,
+    val slideSource: String? = null,
 ) {
     init {
         require(models.isNotEmpty()) { "Payload must support at least one model" }
@@ -66,6 +68,13 @@ data class SupportManifest(
                                 url = kernelSu.getString("url"),
                                 size = kernelSu.getLong("size"),
                             ),
+                            rootHelper = payload.optJSONObject("rootHelper")?.let {
+                                RemoteArtifact(
+                                    url = it.getString("url"),
+                                    size = it.getLong("size"),
+                                )
+                            },
+                            slideSource = payload.optString("slideSource", "").takeIf(String::isNotBlank),
                         ),
                     )
                 }
