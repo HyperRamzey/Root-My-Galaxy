@@ -60,6 +60,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Autorenew
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
@@ -607,6 +608,7 @@ private fun OverviewPage(
             }
         }
         item { InstallStatusCard(installState, onInstall) }
+        item { RootOnBootProgressCard() }
         item { SoftRebootCard(installState, onSoftReboot) }
         item { DeviceCard(device) }
         item { HowItWorksCard() }
@@ -848,6 +850,109 @@ private fun InstallStatusCard(installState: InstallUiState, onInstall: () -> Uni
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.86f),
                     maxLines = 1,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RootOnBootProgressCard() {
+    val state by RootOnBootProgress.state.collectAsStateWithLifecycle()
+    if (state is RootOnBootState.Idle) return
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(36.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Autorenew, contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Text(
+                    stringResource(R.string.root_on_boot_card_title),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+
+            when (val s = state) {
+                is RootOnBootState.Running -> {
+                    // Stage + ETA line
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(s.stage, style = MaterialTheme.typography.bodyMedium)
+                        if (s.etaMs >= 0) {
+                            Text(
+                                stringResource(R.string.root_on_boot_eta, (s.etaMs / 1000).toInt()),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    // Progress bar (exploit stage uses ETA-based progress)
+                    if (s.etaMs >= 0) {
+                        val total = RootOnBootProgress.EXPLOIT_ETA_MS.toFloat()
+                        val progress = ((total - s.etaMs) / total).coerceIn(0f, 1f)
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(MaterialTheme.shapes.small),
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(MaterialTheme.shapes.small),
+                        )
+                    }
+                    // Last exploit log line
+                    if (s.lastLine.isNotBlank()) {
+                        Text(
+                            s.lastLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                    // Elapsed
+                    Text(
+                        "${s.elapsedMs / 1000}s elapsed",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    )
+                }
+                is RootOnBootState.Done -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            if (s.success) Icons.Rounded.CheckCircle else Icons.Rounded.Error,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (s.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        )
+                        Text(s.message, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                is RootOnBootState.Idle -> {}
             }
         }
     }

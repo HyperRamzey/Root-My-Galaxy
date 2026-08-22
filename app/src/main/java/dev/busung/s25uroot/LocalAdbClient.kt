@@ -256,6 +256,7 @@ class LocalAdbClient(
         command: String,
         overallTimeoutMs: Long = 15 * 60 * 1000L,
         stallTimeoutMs: Long = 5 * 60 * 1000L,
+        shouldStop: () -> Boolean = { false },
         onOutput: (String) -> Unit,
     ): ShellResult {
         val localId = 1
@@ -277,6 +278,11 @@ class LocalAdbClient(
                     }
                     if (now - lastOutputAt > stallTimeoutMs) {
                         Log.w(TAG, "shellStreaming stall timeout reached")
+                        break
+                    }
+                    if (shouldStop()) {
+                        Log.d(TAG, "shellStreaming: early stop requested")
+                        write(A_CLSE, localId, message.arg0)
                         break
                     }
                     // Poll the reader queue with a short timeout so we can

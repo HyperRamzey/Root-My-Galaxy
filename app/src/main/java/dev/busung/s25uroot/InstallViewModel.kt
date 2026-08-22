@@ -281,12 +281,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val suCheck = adb.shell("su -c id 2>&1")
         if (suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
             appendLog("[+] su available, activating modules via ksud lifecycle")
-            val pfd = adb.shell("su -c '/data/adb/ksud post-fs-data 2>&1 | tail -1; echo exit=$?'")
-            appendLog("[*] post-fs-data: ${pfd.output.trim().takeLast(80)}")
-            val svc = adb.shell("su -c '/data/adb/ksud services 2>&1 | tail -1; echo exit=$?'")
-            appendLog("[*] services: ${svc.output.trim().takeLast(80)}")
-            val bc = adb.shell("su -c '/data/adb/ksud boot-completed 2>&1 | tail -1; echo exit=$?'")
-            appendLog("[*] boot-completed: ${bc.output.trim().takeLast(80)}")
+            // Run ksud stages in background with full fd detach — daemonized
+            // children inherit the ADB pipe and keep the stream open forever.
+            // setsid + & + redirect all fds ensures the shell returns instantly.
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud post-fs-data > /data/local/tmp/ksud-pfd.log 2>&1 < /dev/null\" & echo pfd_bg'")
+            Thread.sleep(12_000) // post-fs-data takes ~5-10s
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud services > /data/local/tmp/ksud-svc.log 2>&1 < /dev/null\" & echo svc_bg'")
+            Thread.sleep(5_000)
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud boot-completed > /data/local/tmp/ksud-bc.log 2>&1 < /dev/null\" & echo bc_bg'")
+            Thread.sleep(3_000)
+            appendLog("[*] ksud lifecycle stages done")
             // Restart zygote so Zygisk modules inject into fresh process
             val kill = adb.shell("su -c 'for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo zygote-killed'")
             if (kill.output.contains("zygote-killed")) {

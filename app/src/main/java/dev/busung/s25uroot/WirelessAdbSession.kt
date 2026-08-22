@@ -72,9 +72,13 @@ class WirelessAdbSession private constructor(
      * log to stdout via a foreground supervisor, so streaming the helper's
      * stdout directly yields real-time progress.
      */
-    fun runStreaming(command: String, onOutput: (String) -> Unit): String {
+    fun runStreaming(
+        command: String,
+        shouldStop: () -> Boolean = { false },
+        onOutput: (String) -> Unit,
+    ): String {
         val accumulated = StringBuilder()
-        client.shellStreaming(command) { chunk ->
+        client.shellStreaming(command, shouldStop = shouldStop) { chunk ->
             accumulated.append(chunk)
             onOutput(accumulated.toString())
         }

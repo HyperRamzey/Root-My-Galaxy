@@ -45,6 +45,7 @@ class RootOnBootService : Service() {
                     getString(R.string.boot_notification_failed, it.message ?: it.javaClass.simpleName)
                 },
             )
+            RootOnBootProgress.update(RootOnBootState.Done(result.isSuccess, message))
             notifyResult(result.isSuccess, message)
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelf()
@@ -53,12 +54,26 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBoot() {
-        updateNotification(getString(R.string.boot_notification_running))
+        val started = System.currentTimeMillis()
+        fun running(stage: String, lastLine: String = "", etaMs: Long = -1) {
+            RootOnBootProgress.update(
+                RootOnBootState.Running(
+                    stage = stage,
+                    lastLine = lastLine,
+                    elapsedMs = System.currentTimeMillis() - started,
+                    etaMs = etaMs,
+                ),
+            )
+            updateNotification("$stage${if (lastLine.isNotBlank()) " — $lastLine" else ""}")
+        }
+
+        running(getString(R.string.boot_stage_connecting))
 
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
         val adb = WirelessAdbSession.open(this)
 
         // 4. Resolve target and stage payloads
+        running(getString(R.string.boot_stage_staging))
         val profile = PayloadRepository(this).resolveTarget(DeviceSnapshot.current())
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
         val exploit = File(payloadDir, "cve-2026-43499-app.so")
@@ -82,6 +97,7 @@ class RootOnBootService : Service() {
         // stays open for the full run — adbd kills a backgrounded process the
         // moment its shell stream closes, and the helper streams the live log
         // to stdout via a foreground supervisor.
+        running(getString(R.string.boot_stage_exploit), etaMs = RootOnBootProgress.EXPLOIT_ETA_MS)
         val exploitCmd = buildString {
             append("SLIDE_SOURCE=tracefs ")
             append("EXPLOIT_ATTEMPTS=1 ")
@@ -89,23 +105,58 @@ class RootOnBootService : Service() {
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
             append("$remoteHelper --run-payload $remoteExploit $remoteHelper /data/local/tmp/f946b.log")
         }
-        val exploitOutput = adb.runStreaming(exploitCmd) { }
-        check(exploitOutput.contains("exploit completed")) {
-            "Exploit did not succeed this boot: ${exploitOutput.takeLast(200)}"
+        // Stream the exploit output. Once we see "exploit completed", the
+        // supervisor will auto-trigger late-load + apply-modules (which kills
+        // zygote and drops the ADB connection), so we must NOT wait for the
+        // stream to close — return as soon as the success marker appears.
+        var exploitDone = false
+        val exploitOutput = try {
+            adb.runStreaming(
+                exploitCmd,
+                shouldStop = { exploitDone },
+            ) { accumulated ->
+                val lastLine = accumulated.lineSequence()
+                    .filter { it.isNotBlank() }
+                    .lastOrNull()
+                    ?.takeLast(100)
+                    ?: ""
+                val elapsed = System.currentTimeMillis() - started
+                val remaining = (RootOnBootProgress.EXPLOIT_ETA_MS - elapsed).coerceAtLeast(0)
+                running(getString(R.string.boot_stage_exploit), lastLine, remaining)
+                if (accumulated.contains("exploit completed")) {
+                    exploitDone = true
+                }
+            }
+        } catch (_: Exception) {
+            // Stream may be interrupted when zygote kill drops ADB — that's OK
+            // if we already saw the success marker.
+            ""
+        }
+        if (!exploitDone) {
+            // Stream ended without success marker — check the log file
+            val logContent = adb.readLog("/data/local/tmp/f946b.log")
+            check(logContent.contains("exploit completed")) {
+                "Exploit did not succeed this boot: ${(exploitOutput + logContent).takeLast(200)}"
+            }
         }
 
         // 6. Load KernelSU
+        running(getString(R.string.boot_stage_kernelsu))
         val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
         // 7. Activate modules + restart zygote. Prefer `su -c` (persists under
         // Enforcing once shell has been granted root by KernelSU); fall back
         // to the daemon apply-modules path while SELinux is still permissive.
+        running(getString(R.string.boot_stage_modules))
         val suCheck = adb.shell("su -c id 2>&1")
         if (suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
-            adb.shell("su -c '/data/adb/ksud post-fs-data 2>&1 | tail -1'")
-            adb.shell("su -c '/data/adb/ksud services 2>&1 | tail -1'")
-            adb.shell("su -c '/data/adb/ksud boot-completed 2>&1 | tail -1'")
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud post-fs-data > /data/local/tmp/ksud-pfd.log 2>&1 < /dev/null\" & echo pfd_bg'")
+            Thread.sleep(12_000)
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud services > /data/local/tmp/ksud-svc.log 2>&1 < /dev/null\" & echo svc_bg'")
+            Thread.sleep(5_000)
+            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud boot-completed > /data/local/tmp/ksud-bc.log 2>&1 < /dev/null\" & echo bc_bg'")
+            Thread.sleep(3_000)
             adb.shell("su -c 'for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo zygote-killed'")
         } else {
             val apply = adb.shell("$remoteHelper --apply-modules")
