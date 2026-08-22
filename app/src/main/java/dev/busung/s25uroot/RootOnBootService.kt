@@ -71,10 +71,12 @@ class RootOnBootService : Service() {
         val remoteExploit = "/data/local/tmp/f946b.so"
         val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
         val remoteKsud = "/data/local/tmp/ksud-s25u-kdp"
+        val remoteKsudStage = "/data/local/tmp/.ksud-stage"
 
         adb.push(exploit, remoteExploit, executable = true)
         adb.push(rootHelper, remoteHelper, executable = true)
         adb.push(ksud, remoteKsud, executable = true)
+        adb.push(ksud, remoteKsudStage, executable = true)
 
         // 5. Run the exploit (one attempt per boot) in a streaming shell that
         // stays open for the full run — adbd kills a backgrounded process the
