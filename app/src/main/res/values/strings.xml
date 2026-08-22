@@ -61,8 +61,7 @@
     <string name="history_completed">Completed: %1$s</string>
     <string name="history_log_empty">No log output yet.</string>
     <string name="history_payload">Payload: %1$s</string>
-    <string name="history_shizuku_used">Shizuku: used</string>
-    <string name="history_shizuku_not_used">Shizuku: not used</string>
+    <string name="history_wireless_adb">Executed via wireless ADB</string>
     <string name="export_log">Export log</string>
     <string name="export_log_saved">Log saved</string>
     <string name="export_log_failed">Unable to save the log</string>
@@ -100,6 +99,10 @@
     <string name="status_ksu_loading">Late-loading KernelSU</string>
     <string name="status_install_failed">Installation failed</string>
     <string name="log_profile">[+] Support profile: %1$s</string>
+    <string name="log_adb_connecting">[*] Connecting to local wireless ADB…</string>
+    <string name="log_adb_connected">[+] Wireless ADB connected: %1$s</string>
+    <string name="log_adb_staged">[+] Payload + helper staged via wireless ADB</string>
+    <string name="error_adb_connection">Wireless ADB connection failed. Pair with wireless debugging first (Settings → Wireless ADB pairing).</string>
     <string name="log_download_verified">[+] Payload download complete</string>
     <string name="log_install_complete">[+] Installation complete</string>
     <string name="log_bootstrap_root">[+] Bootstrap root acquired</string>
@@ -108,8 +111,13 @@
     <string name="log_modules_applying">[*] Mounting KernelSU modules and restarting zygote</string>
     <string name="log_modules_mounted">[+] KernelSU modules mounted</string>
     <string name="log_modules_zygote_restarted">[+] Zygote restarted — modules will apply after soft-reboot</string>
+    <string name="log_grant_shell_root_hint">[!] To enable module activation, grant root to the shell app in KernelSU Manager (it persists across reboots).</string>
     <string name="error_modules_restart">Zygote restart failed: %1$s</string>
     <string name="action_apply_modules">Apply Modules (Restart Zygote)</string>
+    <string name="action_soft_reboot">Soft Reboot</string>
+    <string name="action_restart_zygisk">Restart Zygisk</string>
+    <string name="soft_reboot_desc">Mount KSU modules via ksud and restart zygote so Zygisk/LSPosed modules inject (root)</string>
+    <string name="first_install_shell_root_hint">For module activation (Zygisk/LSPosed) to work automatically, grant root access to the shell app in KernelSU Manager after the first install. This grant persists across reboots.</string>
     <string name="section_root_on_boot">Root on boot</string>
     <string name="pref_auto_apply_modules">Auto-apply modules after install</string>
     <string name="pref_auto_apply_modules_summary">Mount KSU modules and restart zygote automatically after each successful exploit</string>
@@ -137,12 +145,9 @@
     <string name="boot_notification_running">Re-applying root…</string>
     <string name="boot_notification_success">Root + KernelSU applied successfully</string>
     <string name="boot_notification_failed">Root-on-boot failed: %1$s</string>
-    <string name="error_helper_unavailable">The bootstrap helper is not executable</string>
     <string name="error_exploit_stalled">The exploit log did not advance for 90 seconds</string>
     <string name="error_exploit_timeout">The exploit exceeded the 15-minute limit</string>
-    <string name="error_payload_exit">Payload execution failed: %1$d%2$s</string>
     <string name="error_success_marker">Exploit success markers were not found</string>
-    <string name="error_ksu_stage">KernelSU staging failed: %1$s</string>
     <string name="error_ksu_verify">KernelSU late-load or control verification failed (rc=%1$d): %2$s</string>
     <string name="error_boot_id">Unable to read the current boot_id</string>
     <string name="error_receipt">Unable to save the installation verification receipt</string>
@@ -167,16 +172,6 @@
     <string name="advanced">Advanced</string>
     <string name="advanced_mode">Advanced mode</string>
     <string name="advanced_mode_description">Manually choose a device-compatible payload during installation</string>
-    <string name="shizuku_mode">Use Shizuku</string>
-    <string name="shizuku_mode_description">Use Shizuku to run the payload. This can improve reliability.</string>
-    <string name="shizuku_not_running_title">Shizuku is not running</string>
-    <string name="shizuku_not_running_body">Start the Shizuku service with adb or root and grant this app permission, then enable this option.</string>
-    <string name="action_download_shizuku">Download Shizuku</string>
-    <string name="error_shizuku_unavailable">Shizuku is not running. Start Shizuku with adb or root first.</string>
-    <string name="error_shizuku_permission">Shizuku permission was not granted</string>
-    <string name="error_shizuku_stage">Unable to stage %1$s through Shizuku: %2$s</string>
-    <string name="log_shizuku_prepare">[*] Preparing Shizuku execution</string>
-    <string name="log_shizuku_permission">[+] Shizuku permission granted</string>
     <string name="repo_profile_missing">Support profile %1$s is no longer available</string>
     <string name="select_device_title">Choose a payload</string>
     <string name="select_device_description">Select a payload by device model and kernel version.</string>

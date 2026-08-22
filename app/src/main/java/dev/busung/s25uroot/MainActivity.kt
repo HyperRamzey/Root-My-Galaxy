@@ -167,16 +167,15 @@ class MainActivity : ComponentActivity() {
     private var accentColor by mutableStateOf(AccentColor.Dynamic)
     private var themeMode by mutableStateOf(AppThemeMode.System)
     private var advancedMode by mutableStateOf(false)
-    private var shizukuMode by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.isNavigationBarContrastEnforced = false
+        requestBatteryOptimizationExemption()
         accentColor = AppPreferences.accentColor(this)
         themeMode = AppPreferences.themeMode(this)
         advancedMode = AppPreferences.advancedMode(this)
-        shizukuMode = AppPreferences.shizukuMode(this)
         setContent {
             RootMyGalaxyTheme(accentColor = accentColor, themeMode = themeMode) {
                 RootApp(
@@ -184,7 +183,6 @@ class MainActivity : ComponentActivity() {
                     accentColor = accentColor,
                     themeMode = themeMode,
                     advancedMode = advancedMode,
-                    shizukuMode = shizukuMode,
                     onAccentColorChanged = { color ->
                         AppPreferences.setAccentColor(this, color)
                         accentColor = color
@@ -196,10 +194,6 @@ class MainActivity : ComponentActivity() {
                     onAdvancedModeChanged = { enabled ->
                         AppPreferences.setAdvancedMode(this, enabled)
                         advancedMode = enabled
-                    },
-                    onShizukuModeChanged = { enabled ->
-                        AppPreferences.setShizukuMode(this, enabled)
-                        shizukuMode = enabled
                     },
                     openInstaller = { profileId ->
                         val installer = Intent(this, InstallActivity::class.java)
@@ -217,6 +211,28 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (resumedOnce) installViewModel.refresh() else resumedOnce = true
+    }
+
+    /**
+     * Ask the user to exempt us from battery optimizations so the root-on-boot
+     * foreground service and wireless-ADB pairing survive Doze.
+     */
+    private fun requestBatteryOptimizationExemption() {
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        try {
+            startActivity(
+                Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    .setData(Uri.parse("package:$packageName")),
+            )
+        } catch (_: Exception) {
+            // Fallback: generic battery-optimization list
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                Toast.makeText(this, "Please disable battery optimization for this app", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 }
 
@@ -251,8 +267,6 @@ private const val KERNEL_SU_MANAGER_URL =
     "https://github.com/tiann/KernelSU/releases/download/v3.2.5/KernelSU_v3.2.5_32525-release.apk"
 private const val KERNEL_SU_MANAGER_PACKAGE = "me.weishu.kernelsu"
 private const val KERNEL_SU_HOME_URL = "https://kernelsu.org/"
-private const val SHIZUKU_MANAGER_PACKAGE = "moe.shizuku.manager"
-private const val SHIZUKU_MANAGER_URL = "https://github.com/thedjchi/Shizuku/releases/"
 
 private fun isKernelSuManagerInstalled(context: Context): Boolean =
     context.packageManager.getLaunchIntentForPackage(KERNEL_SU_MANAGER_PACKAGE) != null
@@ -266,27 +280,17 @@ private fun openKernelSuManager(context: Context) {
     }
 }
 
-private fun openShizukuManager(context: Context) {
-    val launch = context.packageManager.getLaunchIntentForPackage(SHIZUKU_MANAGER_PACKAGE)
-    if (launch != null) {
-        context.startActivity(launch)
-    } else {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SHIZUKU_MANAGER_URL)))
-    }
-}
-
 @Composable
 private fun RootApp(
     installViewModel: InstallViewModel,
     accentColor: AccentColor,
     themeMode: AppThemeMode,
     advancedMode: Boolean,
-    shizukuMode: Boolean,
     onAccentColorChanged: (AccentColor) -> Unit,
     onThemeModeChanged: (AppThemeMode) -> Unit,
     onAdvancedModeChanged: (Boolean) -> Unit,
-    onShizukuModeChanged: (Boolean) -> Unit,
     openInstaller: (String?) -> Unit,
+    onSoftReboot: () -> Unit = { installViewModel.softReboot() },
 ) {
     val installState by installViewModel.state.collectAsStateWithLifecycle()
     val history by installViewModel.history.collectAsStateWithLifecycle()
@@ -493,6 +497,7 @@ private fun RootApp(
                             showInstallConfirmation = true
                         }
                     },
+                    onSoftReboot = { installViewModel.softReboot() },
                 )
                 AppPage.History -> HistoryPage(
                     padding,
@@ -504,14 +509,12 @@ private fun RootApp(
                     accentColor = accentColor,
                     themeMode = themeMode,
                     advancedMode = advancedMode,
-                    shizukuMode = shizukuMode,
                     updateStatus = updateStatus,
                     onCheckForUpdate = checkForUpdate,
                     onStartDownload = startDownload,
                     onAccentColorChanged = onAccentColorChanged,
                     onThemeModeChanged = onThemeModeChanged,
                     onAdvancedModeChanged = onAdvancedModeChanged,
-                    onShizukuModeChanged = onShizukuModeChanged,
                 )
             }
         }
@@ -560,6 +563,7 @@ private fun OverviewPage(
     onDismissUpdateCard: () -> Unit,
     onStartDownload: (UpdateInfo) -> Unit,
     onInstall: () -> Unit,
+    onSoftReboot: () -> Unit = {},
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -603,6 +607,7 @@ private fun OverviewPage(
             }
         }
         item { InstallStatusCard(installState, onInstall) }
+        item { SoftRebootCard(installState, onSoftReboot) }
         item { DeviceCard(device) }
         item { HowItWorksCard() }
     }
@@ -842,6 +847,82 @@ private fun InstallStatusCard(installState: InstallUiState, onInstall: () -> Uni
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.86f),
                     maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SoftRebootCard(installState: InstallUiState, onSoftReboot: () -> Unit) {
+    val view = LocalView.current
+    val context = LocalContext.current
+    val enabled = !installState.busy
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Surface(
+                    modifier = Modifier.size(36.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(stringResource(R.string.action_soft_reboot), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.soft_reboot_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            FilledTonalButton(
+                onClick = {
+                    clickHaptic(view)
+                    android.widget.Toast.makeText(context, "Applying modules & restarting zygote…", android.widget.Toast.LENGTH_SHORT).show()
+                    onSoftReboot()
+                },
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.action_apply_modules))
+            }
+            if (installState.busy) {
+                Text(
+                    "Busy: " + installState.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+            if (installState.log.isNotBlank()) {
+                val tail = remember(installState.log) {
+                    installState.log.split("\n").takeLast(6).joinToString("\n")
+                }
+                Text(
+                    tail,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                    maxLines = 6,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
             }
         }
@@ -1324,13 +1405,7 @@ private fun HistoryResultCard(entry: InstallHistoryEntry) {
                     )
                 }
                 Text(
-                    stringResource(
-                        if (entry.usedShizuku) {
-                            R.string.history_shizuku_used
-                        } else {
-                            R.string.history_shizuku_not_used
-                        },
-                    ),
+                    stringResource(R.string.history_wireless_adb),
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor.copy(alpha = 0.78f),
                 )
@@ -1407,14 +1482,12 @@ private fun SettingsPage(
     accentColor: AccentColor,
     themeMode: AppThemeMode,
     advancedMode: Boolean,
-    shizukuMode: Boolean,
     updateStatus: UpdateStatus,
     onCheckForUpdate: () -> Unit,
     onStartDownload: (UpdateInfo) -> Unit,
     onAccentColorChanged: (AccentColor) -> Unit,
     onThemeModeChanged: (AppThemeMode) -> Unit,
     onAdvancedModeChanged: (Boolean) -> Unit,
-    onShizukuModeChanged: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -1422,15 +1495,20 @@ private fun SettingsPage(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showColorDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
-    var showShizukuMissingDialog by remember { mutableStateOf(false) }
     var showAdbPairingDialog by remember { mutableStateOf(false) }
+    // Reactive state so the switches recompose immediately on toggle.
+    var autoApplyModules by remember { mutableStateOf(AppPreferences.autoApplyModules(context)) }
+    var autoRootOnBoot by remember { mutableStateOf(AppPreferences.autoRootOnBoot(context)) }
+    var adbPaired by remember { mutableStateOf(AppPreferences.adbPaired(context)) }
     var languageMenuTop by remember { mutableStateOf(32.dp) }
     var colorMenuTop by remember { mutableStateOf(32.dp) }
     val density = LocalDensity.current
     val currentLanguageTag = AppPreferences.languageTag(context)
 
     if (showAdbPairingDialog) {
-        val paired = AppPreferences.adbPaired(context)
+        // Refresh pairing status each time the dialog is (re)composed.
+        LaunchedEffect(Unit) { adbPaired = AppPreferences.adbPaired(context) }
+        val paired = adbPaired
         AlertDialog(
             onDismissRequest = { showAdbPairingDialog = false },
             icon = { Icon(Icons.Rounded.Wifi, contentDescription = null) },
@@ -1461,6 +1539,15 @@ private fun SettingsPage(
                     clickHaptic(view)
                     showAdbPairingDialog = false
                     context.startForegroundService(AdbPairingService.startIntent(context))
+                    // Poll for pairing completion so the status card updates live.
+                    scope.launch {
+                        repeat(60) {
+                            kotlinx.coroutines.delay(1000)
+                            val nowPaired = AppPreferences.adbPaired(context)
+                            if (nowPaired != adbPaired) adbPaired = nowPaired
+                            if (nowPaired) return@launch
+                        }
+                    }
                 }) {
                     Text(stringResource(R.string.adb_pair_button))
                 }
@@ -1471,35 +1558,6 @@ private fun SettingsPage(
                     showAdbPairingDialog = false
                 }) {
                     Text(stringResource(R.string.action_close))
-                }
-            },
-        )
-    }
-
-    if (showShizukuMissingDialog) {
-        AlertDialog(
-            onDismissRequest = { showShizukuMissingDialog = false },
-            icon = { Icon(Icons.Rounded.Info, contentDescription = null) },
-            title = {
-                DialogDimAmount(0.34f)
-                Text(stringResource(R.string.shizuku_not_running_title))
-            },
-            text = { Text(stringResource(R.string.shizuku_not_running_body)) },
-            confirmButton = {
-                FilledTonalButton(onClick = {
-                    clickHaptic(view)
-                    showShizukuMissingDialog = false
-                    openShizukuManager(context)
-                }) {
-                    Text(stringResource(R.string.action_download_shizuku))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    clickHaptic(view)
-                    showShizukuMissingDialog = false
-                }) {
-                    Text(stringResource(R.string.action_cancel))
                 }
             },
         )
@@ -1579,35 +1637,10 @@ private fun SettingsPage(
                     title = stringResource(R.string.language),
                     description = stringResource(R.string.language_description),
                     value = languageLabel(currentLanguageTag),
-                    position = SettingsCardPosition.Middle,
+                    position = SettingsCardPosition.Bottom,
                     onClick = {
                         clickHaptic(view)
                         showLanguageDialog = true
-                    },
-                )
-                SettingsSwitchCard(
-                    icon = Icons.Rounded.VerifiedUser,
-                    title = stringResource(R.string.shizuku_mode),
-                    description = stringResource(R.string.shizuku_mode_description),
-                    checked = shizukuMode,
-                    position = SettingsCardPosition.Bottom,
-                    onCheckedChange = { enabled ->
-                        clickHaptic(view)
-                        if (!enabled) {
-                            onShizukuModeChanged(false)
-                        } else {
-                            scope.launch {
-                                ShizukuController.pingUntilRunning()
-                                if (ShizukuController.isRunning()) {
-                                    onShizukuModeChanged(true)
-                                    if (!ShizukuController.isGranted()) {
-                                        ShizukuController.requestPermission()
-                                    }
-                                } else {
-                                    showShizukuMissingDialog = true
-                                }
-                            }
-                        }
                     },
                 )
             }
@@ -1632,29 +1665,31 @@ private fun SettingsPage(
                     icon = Icons.Rounded.Refresh,
                     title = stringResource(R.string.pref_auto_apply_modules),
                     description = stringResource(R.string.pref_auto_apply_modules_summary),
-                    checked = AppPreferences.autoApplyModules(context),
+                    checked = autoApplyModules,
                     position = SettingsCardPosition.Top,
-                    onCheckedChange = {
+                    onCheckedChange = { enabled ->
                         clickHaptic(view)
-                        AppPreferences.setAutoApplyModules(context, it)
+                        autoApplyModules = enabled
+                        AppPreferences.setAutoApplyModules(context, enabled)
                     },
                 )
                 SettingsSwitchCard(
                     icon = Icons.Rounded.PowerSettingsNew,
                     title = stringResource(R.string.pref_auto_root_boot),
                     description = stringResource(R.string.pref_auto_root_boot_summary),
-                    checked = AppPreferences.autoRootOnBoot(context),
+                    checked = autoRootOnBoot,
                     position = SettingsCardPosition.Middle,
-                    onCheckedChange = {
+                    onCheckedChange = { enabled ->
                         clickHaptic(view)
-                        AppPreferences.setAutoRootOnBoot(context, it)
+                        autoRootOnBoot = enabled
+                        AppPreferences.setAutoRootOnBoot(context, enabled)
                     },
                 )
                 SettingsCard(
                     icon = Icons.Rounded.Wifi,
                     title = stringResource(R.string.pref_adb_pairing),
                     description = stringResource(R.string.pref_adb_pairing_summary),
-                    value = if (AppPreferences.adbPaired(context)) {
+                    value = if (adbPaired) {
                         stringResource(R.string.adb_pair_status_paired)
                     } else {
                         stringResource(R.string.adb_pair_status_not_paired)

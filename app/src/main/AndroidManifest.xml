@@ -13,7 +13,6 @@
 
     <queries>
         <package android:name="me.weishu.kernelsu" />
-        <package android:name="moe.shizuku.manager" />
     </queries>
 
     <application
@@ -33,13 +32,6 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <activity
             android:name=".InstallActivity"
             android:exported="false" />

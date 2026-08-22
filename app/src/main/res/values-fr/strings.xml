@@ -86,12 +86,9 @@
     <string name="log_bootstrap_root">[+] Droits root de base acquis</string>
     <string name="log_ksu_staged">[+] Préparation de KernelSU terminée</string>
     <string name="log_ksu_control_verified">[+] Canal de contrôle KernelSU vérifié</string>
-    <string name="error_helper_unavailable">L\'assistant de démarrage n\'est pas exécutable</string>
     <string name="error_exploit_stalled">Le journal de l\'exploit n\'a pas avancé depuis 90 secondes</string>
     <string name="error_exploit_timeout">L\'exploit a dépassé la limite de 15 minutes</string>
-    <string name="error_payload_exit">L\'exécution de la charge utile a échoué : %1$d%2$s</string>
     <string name="error_success_marker">Les marqueurs de succès de l\'exploit n\'ont pas été trouvés</string>
-    <string name="error_ksu_stage">La préparation de KernelSU a échoué : %1$s</string>
     <string name="error_ksu_verify">Le chargement tardif ou la vérification du contrôle de KernelSU a échoué (rc=%1$d) : %2$s</string>
     <string name="error_boot_id">Impossible de lire le boot_id actuel</string>
     <string name="error_receipt">Impossible de sauvegarder le reçu de vérification de l\'installation</string>
@@ -116,16 +113,6 @@
     <string name="advanced">Avancé</string>
     <string name="advanced_mode">Mode avancé</string>
     <string name="advanced_mode_description">Choisir manuellement une charge utile compatible avec l\'appareil lors de l\'installation</string>
-    <string name="shizuku_mode">Utiliser Shizuku</string>
-    <string name="shizuku_mode_description">Utiliser Shizuku pour exécuter la charge utile. Cela peut améliorer la fiabilité.</string>
-    <string name="shizuku_not_running_title">Shizuku n\'est pas en cours d\'exécution</string>
-    <string name="shizuku_not_running_body">Démarrez le service Shizuku avec adb ou root et accordez la permission à cette application, puis activez cette option.</string>
-    <string name="action_download_shizuku">Télécharger Shizuku</string>
-    <string name="error_shizuku_unavailable">Shizuku n\'est pas en cours d\'exécution. Démarrez d\'abord Shizuku avec adb ou root.</string>
-    <string name="error_shizuku_permission">La permission Shizuku n\'a pas été accordée</string>
-    <string name="error_shizuku_stage">Impossible de préparer %1$s via Shizuku : %2$s</string>
-    <string name="log_shizuku_prepare">[*] Préparation de l\'exécution Shizuku</string>
-    <string name="log_shizuku_permission">[+] Permission Shizuku accordée</string>
     <string name="repo_profile_missing">Le profil de compatibilité %1$s n\'est plus disponible</string>
     <string name="select_device_title">Choisir une charge utile</string>
     <string name="select_device_description">Sélectionner une charge utile par modèle d\'appareil et version de noyau.</string>
@@ -146,8 +133,6 @@
     <string name="install_tap_open_manager">Toucher pour ouvrir KernelSU Manager</string>
     <string name="how_it_works">Comment ça marche</string>
     <string name="kernelsu_card_description">Une solution root basée sur le noyau pour Android</string>
-    <string name="history_shizuku_used">Shizuku utilisé</string>
-    <string name="history_shizuku_not_used">Shizuku non utilisé</string>
     <string name="updater_available_title">Une mise à jour est disponible</string>
     <string name="updater_available_body">La version %1$s est disponible</string>
     <string name="updater_button_download">Télécharger et installer</string>

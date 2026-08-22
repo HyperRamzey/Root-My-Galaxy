@@ -60,8 +60,6 @@
     <string name="history_completed">Yakunlandi: %1$s</string>
     <string name="history_log_empty">Jurnalda (log) hali hech qanday ma\'lumot yo\'q.</string>
     <string name="history_payload">Paket (Payload): %1$s</string>
-    <string name="history_shizuku_used">Shizuku: ishlatildi</string>
-    <string name="history_shizuku_not_used">Shizuku: ishlatilmadi</string>
     <string name="export_log">Jurnalni (logni) eksport qilish</string>
     <string name="export_log_saved">Jurnal (log) saqlandi</string>
     <string name="export_log_failed">Jurnalni (logni) saqlab bo\'lmadi</string>
@@ -104,12 +102,9 @@
     <string name="log_bootstrap_root">[+] Boshlang\'ich root olindi</string>
     <string name="log_ksu_staged">[+] KernelSU tayyorgarligi yakunlandi</string>
     <string name="log_ksu_control_verified">[+] KernelSU boshqaruv kanali tekshirildi</string>
-    <string name="error_helper_unavailable">Bootstrap yordamchisini ishga tushirib bo\'lmaydi</string>
     <string name="error_exploit_stalled">Eksployt jurnali 90 soniya davomida yangilanmadi</string>
     <string name="error_exploit_timeout">Eksployt 15 daqiqalik vaqt chegarasidan oshib ketdi</string>
-    <string name="error_payload_exit">Paketni ishga tushirishda xatolik yuz berdi: %1$d%2$s</string>
     <string name="error_success_marker">Eksployt muvaffaqiyatli yakunlanganligi haqida belgilar topilmadi</string>
-    <string name="error_ksu_stage">KernelSU tayyorgarligida xatolik yuz berdi: %1$s</string>
     <string name="error_ksu_verify">KernelSU yuklanishi yoki boshqaruvini tekshirish muvaffaqiyatsiz bo\'ldi (rc=%1$d): %2$s</string>
     <string name="error_boot_id">Joriy boot_id\'ni o\'qib bo\'lmadi</string>
     <string name="error_receipt">O\'rnatishni tasdiqlovchi ma\'lumotni saqlab bo\'lmadi</string>
@@ -134,16 +129,6 @@
     <string name="advanced">Kengaytirilgan</string>
     <string name="advanced_mode">Kengaytirilgan rejim</string>
     <string name="advanced_mode_description">O\'rnatish vaqtida qurilmaga mos paketni (payload) qo\'lda tanlash</string>
-    <string name="shizuku_mode">Shizuku\'dan foydalanish</string>
-    <string name="shizuku_mode_description">Paketni ishga tushirish uchun Shizuku\'dan foydalaning. Bu o\'rnatishning ishonchliligini oshirishi mumkin.</string>
-    <string name="shizuku_not_running_title">Shizuku ishlamayapti</string>
-    <string name="shizuku_not_running_body">Avval Shizuku xizmatini adb yoki root orqali ishga tushiring va ushbu ilovaga ruxsat bering, so\'ngra bu sozlamani yoqing.</string>
-    <string name="action_download_shizuku">Shizuku\'ni yuklab olish</string>
-    <string name="error_shizuku_unavailable">Shizuku ishlamayapti. Avval Shizuku\'ni adb yoki root yordamida ishga tushiring.</string>
-    <string name="error_shizuku_permission">Shizuku uchun ruxsat berilmadi</string>
-    <string name="error_shizuku_stage">%1$s\'ni Shizuku orqali tayyorlab bo\'lmadi: %2$s</string>
-    <string name="log_shizuku_prepare">[*] Shizuku orqali ishga tushirishga tayyorlanmoqda</string>
-    <string name="log_shizuku_permission">[+] Shizuku uchun ruxsat berildi</string>
     <string name="repo_profile_missing">%1$s moslik profili endi mavjud emas</string>
     <string name="select_device_title">Paketni tanlang</string>
     <string name="select_device_description">Qurilma modeli va yadro versiyasiga qarab kerakli paketni tanlang.</string>

@@ -22,7 +22,7 @@ import java.net.ConnectException
 
 /**
  * Foreground service that handles ADB wireless-debugging pairing via
- * notification with RemoteInput (same UX as Shizuku).
+ * notification with RemoteInput.
  *
  * Flow:
  * 1. User taps "Pair" in settings → service starts, discovers pairing port via mDNS
@@ -88,19 +88,25 @@ class AdbPairingService : Service() {
     }
 
     private fun onInput(code: String, port: Int) {
+        Log.i(TAG, "onInput: code=${code.length} chars, port=$port")
         scope.launch {
             val keyManager = try {
+                Log.d(TAG, "Creating AdbKeyManager")
                 AdbKeyManager(this@AdbPairingService)
             } catch (e: Throwable) {
+                Log.e(TAG, "AdbKeyManager creation failed", e)
                 handleResult(false, e)
                 return@launch
             }
             try {
+                Log.i(TAG, "Starting AdbPairingClient to 127.0.0.1:$port")
                 val success = AdbPairingClient("127.0.0.1", port, code, keyManager).use {
                     it.start()
                 }
+                Log.i(TAG, "Pairing result: $success")
                 handleResult(success, null)
             } catch (e: Throwable) {
+                Log.e(TAG, "Pairing exception", e)
                 handleResult(false, e)
             }
         }

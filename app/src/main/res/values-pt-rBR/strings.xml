@@ -88,12 +88,9 @@
     <string name="log_bootstrap_root">[+] Root bootstrap adquirido</string>
     <string name="log_ksu_staged">[+] Preparação do KernelSU completa</string>
     <string name="log_ksu_control_verified">[+] Canal de controle do KernelSU verificado</string>
-    <string name="error_helper_unavailable">O helper de bootstrap não é executável</string>
     <string name="error_exploit_stalled">O log do exploit não avançou por 90 segundos</string>
     <string name="error_exploit_timeout">O exploit excedeu o limite de 15 minutos</string>
-    <string name="error_payload_exit">Execução do payload falhou: %1$d%2$s</string>
     <string name="error_success_marker">Marcadores de sucesso do exploit não foram encontrados</string>
-    <string name="error_ksu_stage">Preparação do KernelSU falhou: %1$s</string>
     <string name="error_ksu_verify">Carregamento tardio ou verificação de controle do KernelSU falhou (rc=%1$d): %2$s</string>
     <string name="error_boot_id">Não foi possível ler o boot_id atual</string>
     <string name="error_receipt">Não foi possível salvar o recibo de verificação da instalação</string>
@@ -127,23 +124,11 @@
     <string name="device_mismatch_body">Esse celular é o %1$s, mas o payload que você selecionou suporta o %2$s. Rodar ele pode crashar ou danificar o dispositivo.</string>
     <string name="kernel_version_mismatch_title">Versão de kernel incompatível</string>
     <string name="kernel_version_mismatch_body">Esse celular usa o kernel %1$s, mas o payload que você selecionou suporta o %2$s. Os offsets podem ser incompatíveis.</string>
-    <string name="shizuku_mode">Usar Shizuku</string>
-    <string name="shizuku_mode_description">Usar o Shizuku para executar o payload. Isso pode melhorar a confiabilidade.</string>
-    <string name="shizuku_not_running_title">Shizuku não está em execução</string>
-    <string name="shizuku_not_running_body">Inicie o Shizuku com adb ou root primeiro.</string>
-    <string name="action_download_shizuku">Baixar o Shizuku</string>
-    <string name="error_shizuku_unavailable">Shizuku não está em execução. Inicie o Shizuku com adb ou root primeiro.</string>
-    <string name="error_shizuku_permission">Permissão do Shizuku não concedida</string>
-    <string name="error_shizuku_stage">Não foi possível preparar %1$s pelo Shizuku: %2$s</string>
-    <string name="log_shizuku_prepare">[*] Preparando a execução do Shizuku</string>
-    <string name="log_shizuku_permission">[+] Permissão do Shizuku concedida</string>
     <string name="about">Sobre</string>
     <string name="about_title">Sobre o Root My Galaxy</string>
     <string name="about_description">Sobre o Root My Galaxy</string>
     <string name="about_body">Instalador de um toque que usa uma exploração de kernel para enraizar dispositivos Samsung Galaxy compatíveis.</string>
     <string name="kernelsu_card_description">Solução de root baseada em kernel para Android</string>
-    <string name="history_shizuku_used">Shizuku: usado</string>
-    <string name="history_shizuku_not_used">Shizuku: não usado</string>
     <string name="export_log">Exportar log</string>
     <string name="export_log_saved">Log salvo</string>
     <string name="export_log_failed">Falha ao salvar o log</string>

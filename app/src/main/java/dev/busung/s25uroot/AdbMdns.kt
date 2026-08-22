@@ -11,7 +11,7 @@ import java.net.ServerSocket
 
 /**
  * Discovers the wireless-debugging pairing/connect service via mDNS.
- * Mirrors Shizuku's AdbMdns.
+ * Discovers wireless-debugging mDNS services.
  */
 class AdbMdns(
     context: Context,
@@ -35,14 +35,18 @@ class AdbMdns(
         }
         override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-            nsdManager.resolveService(serviceInfo, resolveListener)
+            // NsdManager rejects a ResolveListener that is already in use, and
+            // multiple services (or the same service re-announced) can arrive
+            // before a prior resolve completes. Create a fresh listener per
+            // resolve call so a second onServiceFound never crashes the app.
+            nsdManager.resolveService(serviceInfo, createResolveListener())
         }
         override fun onServiceLost(serviceInfo: NsdServiceInfo) {
             if (serviceInfo.serviceName == serviceName) onPort(-1)
         }
     }
 
-    private val resolveListener = object : NsdManager.ResolveListener {
+    private fun createResolveListener() = object : NsdManager.ResolveListener {
         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
             if (running && isLocalAddress(serviceInfo) && isPortAvailable(serviceInfo.port)) {
