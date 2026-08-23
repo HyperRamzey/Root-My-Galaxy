@@ -1,5 +1,6 @@
 package dev.busung.s25uroot
 
+
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -196,6 +197,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         // Build the exploit command with environment variables.
         val envVars = buildList {
             add("EXPLOIT_ATTEMPTS=$EXPLOIT_ATTEMPTS")
+            add("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID}")
             add("P0_ATTEMPT_TIMEOUT_SEC=$P0_ATTEMPT_TIMEOUT_SEC")
             add("EXPLOIT_ATTEMPT_TIMEOUT_SEC=$EXPLOIT_ATTEMPT_TIMEOUT_SEC")
             profile.slideSource?.let { add("SLIDE_SOURCE=$it") }

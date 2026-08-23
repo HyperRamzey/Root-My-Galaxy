@@ -54,6 +54,11 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBoot() {
+        if (NativeProbe.isKernelSuActive()) {
+            // Already rooted this boot (manual run or earlier retry): keep
+            // the alarm retries harmless and report success immediately.
+            return
+        }
         val started = System.currentTimeMillis()
         fun running(stage: String, lastLine: String = "", etaMs: Long = -1) {
             RootOnBootProgress.update(
@@ -99,6 +104,7 @@ class RootOnBootService : Service() {
         // to stdout via a foreground supervisor.
         running(getString(R.string.boot_stage_exploit), etaMs = RootOnBootProgress.EXPLOIT_ETA_MS)
         val exploitCmd = buildString {
+            append("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID} ")
             append("SLIDE_SOURCE=tracefs ")
             append("EXPLOIT_ATTEMPTS=1 ")
             append("P0_ATTEMPT_TIMEOUT_SEC=115 ")
