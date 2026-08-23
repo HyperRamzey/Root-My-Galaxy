@@ -59,6 +59,7 @@
     <string name="history_detail_title">Run details</string>
     <string name="history_started">Started: %1$s</string>
     <string name="history_completed">Completed: %1$s</string>
+    <string name="history_log">Execution log</string>
     <string name="history_log_empty">No log output yet.</string>
     <string name="history_payload">Payload: %1$s</string>
     <string name="history_wireless_adb">Executed via wireless ADB</string>
