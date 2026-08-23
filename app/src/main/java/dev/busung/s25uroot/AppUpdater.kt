@@ -64,7 +64,25 @@ object AppUpdater {
     }
 
     fun isUpdateAvailable(latestVersion: String, currentVersion: String): Boolean =
-        latestVersion.isNotEmpty() && latestVersion != currentVersion
+        compareVersions(latestVersion, currentVersion) > 0
+
+    /** Numeric X.Y.Z comparison so an older remote tag (e.g. upstream at
+     * 0.2.6 while this build is 0.2.9) never triggers a downgrade prompt. */
+    private fun compareVersions(a: String, b: String): Int {
+        fun parse(v: String): List<Int> =
+            v.trim().removePrefix("v").split('.').map { part ->
+                part.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
+            }
+        val left = parse(a)
+        val right = parse(b)
+        val size = maxOf(left.size, right.size)
+        for (i in 0 until size) {
+            val l = left.getOrElse(i) { 0 }
+            val r = right.getOrElse(i) { 0 }
+            if (l != r) return l.compareTo(r)
+        }
+        return 0
+    }
 
     suspend fun downloadApk(
         context: Context,

