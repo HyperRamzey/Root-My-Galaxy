@@ -37,6 +37,7 @@ object AppPreferences {
     private const val AUTO_APPLY_MODULES = "auto_apply_modules"
     private const val AUTO_ROOT_BOOT = "auto_root_boot"
     private const val ADB_PAIRED = "adb_paired"
+    private const val BOOT_RETRY_COUNT = "boot_retry_count"
 
     fun accentColor(context: Context): AccentColor = AccentColor.fromStoredValue(
         prefs(context).getString(ACCENT_COLOR, null),
@@ -92,6 +93,14 @@ object AppPreferences {
         prefs(context).edit()
             .putBoolean(ADB_PAIRED, paired)
             .apply()
+    }
+
+    /** Consecutive failed auto-root boots that ended in a retry reboot. */
+    fun bootRetryCount(context: Context): Int =
+        prefs(context).getInt(BOOT_RETRY_COUNT, 0)
+
+    fun setBootRetryCount(context: Context, count: Int) {
+        prefs(context).edit().putInt(BOOT_RETRY_COUNT, count).apply()
     }
 
     @Synchronized

@@ -66,6 +66,7 @@ class RootOnBootService : Service() {
         if (NativeProbe.isKernelSuActive()) {
             // Already rooted this boot (manual run or earlier retry): keep
             // the alarm retries harmless and report success immediately.
+            AppPreferences.setBootRetryCount(this, 0)
             return
         }
         val started = System.currentTimeMillis()
@@ -147,13 +148,34 @@ class RootOnBootService : Service() {
             // if we already saw the success marker.
             ""
         }
-        if (!exploitDone) {
-            // Stream ended without success marker — check the log file
+        var exploitSucceeded = exploitDone
+        if (!exploitSucceeded) {
             val logContent = adb.readLog("/data/local/tmp/f946b.log")
-            check(logContent.contains("exploit completed")) {
-                "Exploit did not succeed this boot: ${(exploitOutput + logContent).takeLast(200)}"
-            }
+            exploitSucceeded = logContent.contains("exploit completed")
         }
+        if (!exploitSucceeded) {
+            // One clean attempt per boot: a burned attempt cannot be repeated
+            // safely, so reboot for a fresh one - bounded by a consecutive
+            // retry budget so a persistently failing state cannot loop
+            // the device forever.
+            val attempts = AppPreferences.bootRetryCount(this) + 1
+            if (attempts <= MAX_BOOT_RETRIES) {
+                AppPreferences.setBootRetryCount(this, attempts)
+                running(
+                    getString(R.string.boot_stage_exploit),
+                    "failed - rebooting to retry ($attempts/$MAX_BOOT_RETRIES)",
+                )
+                runCatching { adb.shell("sync; sleep 2; reboot") }
+                Thread.sleep(20_000) // let adbd drop as the device reboots
+                adb.close()
+                return
+            }
+            error(
+                "Exploit did not succeed this boot and the retry budget is " +
+                    "exhausted ($MAX_BOOT_RETRIES): ${exploitOutput.takeLast(200)}"
+            )
+        }
+        AppPreferences.setBootRetryCount(this, 0)
 
         // 6. Load KernelSU
         running(getString(R.string.boot_stage_kernelsu))
@@ -254,6 +276,7 @@ class RootOnBootService : Service() {
         private const val CHANNEL_ID = "root_on_boot"
         private const val NOTIFICATION_ID = 0x524F42
         private const val MODULE_WAIT_MS = 300_000L
+        private const val MAX_BOOT_RETRIES = 3
 
         @Volatile
         private var RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)
