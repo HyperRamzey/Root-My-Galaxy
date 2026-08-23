@@ -36,6 +36,14 @@ class RootOnBootService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Single-instance guard: BOOT_COMPLETED plus the alarm retries must
+        // never run two pipelines concurrently - overlapping exploits,
+        // late-loads or zygote kills destabilize the device (observed
+        // soft-reboot loops).
+        if (!RUNNING.compareAndSet(false, true)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startInForeground()
         scope.launch {
             val result = runCatching { runRootOnBoot() }
@@ -47,6 +55,7 @@ class RootOnBootService : Service() {
             )
             RootOnBootProgress.update(RootOnBootState.Done(result.isSuccess, message))
             notifyResult(result.isSuccess, message)
+            RUNNING.set(false)
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelf()
         }
@@ -151,29 +160,29 @@ class RootOnBootService : Service() {
         val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
-        // 7. Activate modules + restart zygote. Prefer `su -c` (persists under
-        // Enforcing once shell has been granted root by KernelSU); fall back
-        // to the daemon apply-modules path while SELinux is still permissive.
+        // 7. Module activation is OWNED by the native side (root-daemon
+        // watcher + shell-context stability keeper). The app must not run
+        // ksud stages or kill zygote itself: duplicating the native actors
+        // caused concurrent framework restarts and soft-reboot loops. Wait
+        // for the boot-scoped done marker instead.
         running(getString(R.string.boot_stage_modules))
-        val suCheck = adb.shell("su -c id 2>&1")
-        if (suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
-            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud post-fs-data > /data/local/tmp/ksud-pfd.log 2>&1 < /dev/null\" & echo pfd_bg'")
-            Thread.sleep(12_000)
-            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud services > /data/local/tmp/ksud-svc.log 2>&1 < /dev/null\" & echo svc_bg'")
-            Thread.sleep(5_000)
-            adb.shell("su -c 'setsid sh -c \"timeout 30 /data/adb/ksud boot-completed > /data/local/tmp/ksud-bc.log 2>&1 < /dev/null\" & echo bc_bg'")
-            Thread.sleep(3_000)
-            adb.shell("su -c 'for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo zygote-killed'")
-        } else {
-            val apply = adb.shell("$remoteHelper --apply-modules")
-            if (apply.exitCode != 0) {
-                adb.shellAsRoot(
-                    "for p in \$(pidof zygote64) \$(pidof zygote); do kill -9 \$p 2>/dev/null; done; echo killed",
-                    helperPath = remoteHelper,
-                )
+        val deadline = System.currentTimeMillis() + MODULE_WAIT_MS
+        var applied = false
+        while (System.currentTimeMillis() < deadline) {
+            val done = adb.shell(
+                "cat /data/local/tmp/.cve43499-modules-done 2>/dev/null"
+            ).output.trim()
+            val live = adb.shell(
+                "cat /proc/sys/kernel/random/boot_id 2>/dev/null"
+            ).output.trim()
+            if (live.isNotEmpty() && done.startsWith(live)) {
+                applied = true
+                break
             }
+            Thread.sleep(10_000)
         }
         adb.close()
+        check(applied) { "Module activation did not complete within ${MODULE_WAIT_MS / 1000}s" }
     }
 
     private fun startInForeground() {
@@ -244,5 +253,9 @@ class RootOnBootService : Service() {
     companion object {
         private const val CHANNEL_ID = "root_on_boot"
         private const val NOTIFICATION_ID = 0x524F42
+        private const val MODULE_WAIT_MS = 300_000L
+
+        @Volatile
+        private var RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 }
