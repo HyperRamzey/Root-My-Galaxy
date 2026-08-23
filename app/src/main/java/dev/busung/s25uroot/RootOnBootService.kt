@@ -73,8 +73,12 @@ class RootOnBootService : Service() {
         // Hold a partial wakelock for the whole pipeline and light the
         // screen once ADB is up.
         val powerManager = getSystemService(PowerManager::class.java)
+        // Full wakelock with CAUSES_WAKEUP: light the display ourselves so a
+        // boot-time run never starts against a suspended SoC. Partial alone
+        // is not enough on Samsung idle governors (see screen-off failures).
         val wakeLock = powerManager?.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
+            PowerManager.FULL_WAKE_LOCK or
+                PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "rmg:RootOnBoot",
         )
         wakeLock?.acquire(PIPELINE_WAKELOCK_MS)
@@ -119,7 +123,9 @@ class RootOnBootService : Service() {
         // 4. Resolve target and stage payloads
         running(getString(R.string.boot_stage_staging))
         val repository = PayloadRepository(this)
-        val profile = repository.resolveTarget(DeviceSnapshot.current())
+        // Cached fallback keeps the pipeline alive when GitHub times out
+        // right after boot (observed HTTP 504 from api.github.com).
+        val profile = repository.resolveTarget(DeviceSnapshot.current(), allowCached = true)
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
         val exploit = File(payloadDir, "cve-2026-43499-app.so")
         val rootHelper = File(payloadDir, "cve-2026-43499-root")

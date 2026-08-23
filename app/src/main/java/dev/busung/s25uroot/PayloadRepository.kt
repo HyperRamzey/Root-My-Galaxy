@@ -20,6 +20,8 @@ class PayloadRepository(private val context: Context) {
     fun loadTargets(): List<TargetProfile> {
         val commit = resolveMainCommit()
         val manifestBytes = downloadBytes(rawUrl(commit, "support/targets-v3.json"), MAX_MANIFEST_BYTES)
+        // Persist for offline fallback (see resolveTarget(allowCached)).
+        runCatching { File(context.filesDir, MANIFEST_CACHE).writeBytes(manifestBytes) }
         return SupportManifest.parse(manifestBytes).targets.map { profile -> profile.copy(
             exploit = profile.exploit.copy(url = pinArtifactUrl(profile.exploit.url, commit)),
             kernelSu = profile.kernelSu.copy(url = pinArtifactUrl(profile.kernelSu.url, commit)),
@@ -27,9 +29,44 @@ class PayloadRepository(private val context: Context) {
         ) }
     }
 
-    fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = loadTargets()
-        .firstOrNull { it.matches(snapshot) }
-        ?: error(context.getString(R.string.repo_no_profile))
+    fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = resolveTarget(snapshot, allowCached = false)
+
+    /**
+     * Resolves the target profile against the live feed, falling back to the
+     * last successfully downloaded manifest when the network is unavailable
+     * (GitHub API intermittently returns 504 in the first minutes after
+     * boot). Without this, a transient API outage would abort root-on-boot
+     * even though a valid payload cache exists locally.
+     */
+    fun resolveTarget(snapshot: DeviceSnapshot, allowCached: Boolean): TargetProfile {
+        try {
+            val profile = loadTargets().firstOrNull { it.matches(snapshot) }
+            if (profile != null) {
+                runCatching { cacheManifest() }
+                return profile
+            }
+        } catch (e: Exception) {
+            if (!allowCached) throw e
+            val cached = loadTargetsFromCache()?.firstOrNull { it.matches(snapshot) }
+            if (cached != null) return cached
+            throw e
+        }
+        error(context.getString(R.string.repo_no_profile))
+    }
+
+    private fun cacheManifest() {
+        val bytes = downloadBytes(rawUrl(resolveMainCommit(), MANIFEST_PATH), MAX_MANIFEST_BYTES)
+        File(context.filesDir, MANIFEST_CACHE).writeBytes(bytes)
+    }
+
+    private fun loadTargetsFromCache(): List<TargetProfile>? = runCatching {
+        val file = File(context.filesDir, MANIFEST_CACHE)
+        if (!file.exists()) return null
+        // Offline fallback: serve the last good manifest as-is. The boot
+        // path only needs sizes + file names from it; any refresh download
+        // will re-pin to a live commit once the network is back.
+        SupportManifest.parse(file.readBytes()).targets
+    }.getOrNull()
 
     fun resolveTarget(profileId: String): TargetProfile = loadTargets()
         .firstOrNull { it.profileId == profileId }
@@ -155,6 +192,8 @@ class PayloadRepository(private val context: Context) {
         private const val RAW_REPOSITORY =
             "https://raw.githubusercontent.com/HyperRamzey/Root-My-Galaxy-Payloads"
         private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/main/"
+        private const val MANIFEST_PATH = "support/targets-v3.json"
+        private const val MANIFEST_CACHE = "payloads/targets-cache.json"
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
         private const val MAX_MANIFEST_BYTES = 256 * 1024
     }
