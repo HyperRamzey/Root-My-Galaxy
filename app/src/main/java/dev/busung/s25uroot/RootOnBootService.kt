@@ -93,14 +93,19 @@ class RootOnBootService : Service() {
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
         val exploit = File(payloadDir, "cve-2026-43499-app.so")
         val rootHelper = File(payloadDir, "cve-2026-43499-root")
-        val ksud = File(payloadDir, "ksud-s25u-kdp")
+        // Cache file is named after the feed artifact since v0.2.8; fall back
+        // to the legacy alias for caches written by older builds.
+        val ksudName = profile.kernelSu.url.substringAfterLast('/')
+        val ksud = sequenceOf(ksudName, LEGACY_KSUD_NAME)
+            .map { File(payloadDir, it) }
+            .firstOrNull { it.exists() } ?: File(payloadDir, ksudName)
         check(exploit.exists() && rootHelper.exists() && ksud.exists()) {
             "Cached payloads missing for ${profile.profileId} — run the exploit once from the app first"
         }
 
         val remoteExploit = "/data/local/tmp/f946b.so"
         val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
-        val remoteKsud = "/data/local/tmp/ksud-s25u-kdp"
+        val remoteKsud = "/data/local/tmp/$ksudName"
         val remoteKsudStage = "/data/local/tmp/.ksud-stage"
 
         adb.push(exploit, remoteExploit, executable = true)
@@ -277,6 +282,7 @@ class RootOnBootService : Service() {
         private const val NOTIFICATION_ID = 0x524F42
         private const val MODULE_WAIT_MS = 300_000L
         private const val MAX_BOOT_RETRIES = 3
+        private const val LEGACY_KSUD_NAME = "ksud-s25u-kdp"
 
         @Volatile
         private var RUNNING = java.util.concurrent.atomic.AtomicBoolean(false)

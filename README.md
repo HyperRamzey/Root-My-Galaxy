@@ -8,10 +8,10 @@ supported Samsung model and kernel combinations. The application itself is kept 
 from device offsets, native exploit payloads, and KernelSU build artifacts.
 
 
-[Latest release](https://github.com/BuSung-dev/Root-My-Galaxy/releases)
+[Latest release](https://github.com/HyperRamzey/Root-My-Galaxy/releases)
 
 The device feed and native payloads are maintained in
-[Root-My-Galaxy-Payloads](https://github.com/BuSung-dev/Root-My-Galaxy-Payloads).
+[Root-My-Galaxy-Payloads](https://github.com/HyperRamzey/Root-My-Galaxy-Payloads).
 
 ## Application
 

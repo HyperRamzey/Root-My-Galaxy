@@ -45,7 +45,7 @@ class PayloadRepository(private val context: Context) {
         )
         val kernelSu = downloadArtifact(
             profile.kernelSu,
-            File(directory, "ksud-s25u-kdp"),
+            File(directory, remoteFileName(profile.kernelSu.url)),
             context.getString(R.string.artifact_kernelsu),
             onProgress,
         )
@@ -112,6 +112,8 @@ class PayloadRepository(private val context: Context) {
     }
 
     private fun rawUrl(commit: String, path: String) = "$RAW_REPOSITORY/$commit/$path"
+
+    private fun remoteFileName(url: String) = url.substringAfterLast('/')
 
     private fun pinArtifactUrl(url: String, commit: String): String {
         require(url.startsWith(MUTABLE_RAW_PREFIX)) { context.getString(R.string.repo_url_invalid) }

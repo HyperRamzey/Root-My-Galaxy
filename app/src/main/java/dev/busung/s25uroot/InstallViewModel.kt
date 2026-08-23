@@ -232,8 +232,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun installKernelSu(adb: WirelessAdbSession, payloads: VerifiedPayloads) {
-        // Stage ksud onto the device.
-        adb.push(payloads.kernelSu, REMOTE_KSUD_PATH, executable = true)
+        // Stage ksud onto the device under its feed artifact name; the
+        // payload's loader resolves any /data/local/tmp/ksud-*-kdp candidate.
+        val remoteKsud = "/data/local/tmp/${payloads.profile.kernelSu.url.substringAfterLast('/')}"
+        adb.push(payloads.kernelSu, remoteKsud, executable = true)
         adb.push(payloads.kernelSu, REMOTE_KSUD_STAGE_PATH, executable = true)
         appendLog(app.getString(R.string.log_ksu_staged))
 
@@ -457,7 +459,6 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val P0_OFFSET_MASK = 0xffffL
         private const val REMOTE_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
         private const val REMOTE_HELPER_PATH = "/data/local/tmp/ksu-helper"
-        private const val REMOTE_KSUD_PATH = "/data/local/tmp/ksud-s25u-kdp"
         private const val REMOTE_KSUD_STAGE_PATH = "/data/local/tmp/.ksud-stage"
         private const val REMOTE_LOG_PATH = "/data/local/tmp/ksu-exploit.log"
         private val ANSI_ESCAPE = Regex("\u001B\\[[0-?]*[ -/]*[@-~]")
