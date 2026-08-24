@@ -104,8 +104,8 @@ jobs:
           set -euo pipefail
           git checkout --force "$TAG_NAME"
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Build release APK (debug-signed)
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Generate release notes
         shell: bash
@@ -145,9 +145,9 @@ jobs:
               --title "Release $TAG_NAME" \
               --notes-file release-notes.md \
               --latest
-            gh release upload "$TAG_NAME" app/build/outputs/apk/debug/*.apk --clobber
+            gh release upload "$TAG_NAME" app/build/outputs/apk/release/*.apk --clobber
           else
-            gh release create "$TAG_NAME" app/build/outputs/apk/debug/*.apk \
+            gh release create "$TAG_NAME" app/build/outputs/apk/release/*.apk \
               --title "Release $TAG_NAME" \
               --notes-file release-notes.md \
               --latest
