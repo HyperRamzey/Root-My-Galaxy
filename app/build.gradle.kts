@@ -26,12 +26,24 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            // Committed keystore on purpose: sideload-distributed releases
+            // must share ONE stable signature across local and CI builds,
+            // otherwise self-update (install -r) fails with
+            // INSTALL_FAILED_UPDATE_INCOMPATIBLE because every CI runner
+            // would otherwise mint a different ephemeral debug key.
+            storeFile = file("release.keystore")
+            storePassword = "rmg-release-key"
+            keyAlias = "rmg-release"
+            keyPassword = "rmg-release-key"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sideload distribution: sign releases with the local debug key
-            // so updates install over the existing build without uninstall.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
