@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.BatteryManager
 import android.os.IBinder
 import android.os.PowerManager
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -69,9 +71,13 @@ class RootOnBootService : Service() {
 
     private fun runRootOnBoot() {
         // The exploit choreography is timing-sensitive: a suspended SoC
-        // (screen off -> deep idle) desynchronizes it and burns attempts.
-        // Hold a partial wakelock for the whole pipeline and light the
-        // screen once ADB is up.
+        // (screen off -> deep idle) desynchronizes it — observed as a hard
+        // kernel hang on F946B — so the display must stay on for the whole
+        // pipeline. Hold a full wakelock for the CPU side and, while on
+        // external power, pin STAY_ON_WHILE_PLUGGED_IN for the display
+        // side (FULL_WAKE_LOCK alone is ignored by recent One UI builds).
+        // STAY_ON needs WRITE_SECURE_SETTINGS, which the apply script
+        // self-grants after the first successful root.
         val powerManager = getSystemService(PowerManager::class.java)
         // Full wakelock with CAUSES_WAKEUP: light the display ourselves so a
         // boot-time run never starts against a suspended SoC. Partial alone
@@ -82,9 +88,32 @@ class RootOnBootService : Service() {
             "rmg:RootOnBoot",
         )
         wakeLock?.acquire(PIPELINE_WAKELOCK_MS)
+        val previousStayOn = runCatching {
+            Settings.Global.getInt(
+                contentResolver,
+                Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+            )
+        }.getOrDefault(0)
+        runCatching {
+            // AC | USB | WIRELESS
+            Settings.Global.putInt(
+                contentResolver,
+                Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                BatteryManager.BATTERY_PLUGGED_AC or
+                    BatteryManager.BATTERY_PLUGGED_USB or
+                    BatteryManager.BATTERY_PLUGGED_WIRELESS,
+            )
+        }
         try {
             runRootOnBootLocked()
         } finally {
+            runCatching {
+                Settings.Global.putInt(
+                    contentResolver,
+                    Settings.Global.STAY_ON_WHILE_PLUGGED_IN,
+                    previousStayOn,
+                )
+            }
             runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
         }
     }
@@ -119,6 +148,26 @@ class RootOnBootService : Service() {
         // wakelock (vendor idle governors are stricter than AOSP). Screen
         // on + wakelock keeps the pipeline window stable.
         runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+
+        // Hard gate: refuse to run the choreography unless the display is
+        // verifiably interactive. A suspending SoC mid-sequence has been
+        // observed to corrupt kernel state and hang the device outright —
+        // failing into the reboot-retry ladder is always safer.
+        val pm = getSystemService(PowerManager::class.java)
+        val interactiveDeadline = System.currentTimeMillis() + 20_000
+        var interactive = false
+        while (System.currentTimeMillis() < interactiveDeadline) {
+            if (pm?.isInteractive == true) {
+                interactive = true
+                break
+            }
+            runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+            Thread.sleep(2_000)
+        }
+        check(interactive) {
+            "Display never came interactive — refusing the exploit against " +
+                "a suspending SoC; reboot-retry will re-run with the screen forced on"
+        }
 
         // 4. Resolve target and stage payloads
         running(getString(R.string.boot_stage_staging))
