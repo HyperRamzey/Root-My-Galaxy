@@ -161,15 +161,31 @@ class RootOnBootService : Service() {
             "Cached payloads missing for ${profile.profileId} — run the exploit once from the app first"
         }
 
-        val remoteExploit = "/data/local/tmp/f946b.so"
-        val remoteHelper = "/data/local/tmp/cve-2026-43499-root"
+        // Work-dir staging resolution. Anti-log addons (KillLogger-class)
+        // wipe /data/local/tmp every boot and whatever recreates it labels
+        // system_data_file, which permanently denies adbd staging. When the
+        // probe fails we bootstrap from the app's own bundled jniLibs
+        // (apk_data_file is executable by shell) and defer ksud staging
+        // until the exploit's heal lands — see ExploitStaging.
+        val launch = ExploitStaging.resolve(this, adb, profile.profileId)
+        val remoteExploit = launch.payloadPath
+        val remoteHelper = launch.helperPath
+        val remoteLog = launch.logPath
         val remoteKsud = "/data/local/tmp/${ksud.name}"
         val remoteKsudStage = "/data/local/tmp/.ksud-stage"
 
-        adb.push(exploit, remoteExploit, executable = true)
-        adb.push(rootHelper, remoteHelper, executable = true)
-        adb.push(ksud, remoteKsud, executable = true)
-        adb.push(ksud, remoteKsudStage, executable = true)
+        if (launch.workDirHealthy) {
+            adb.push(exploit, remoteExploit, executable = true)
+            adb.push(rootHelper, remoteHelper, executable = true)
+            adb.push(ksud, remoteKsud, executable = true)
+            adb.push(ksud, remoteKsudStage, executable = true)
+        } else {
+            // Bundled binaries need no staging; only the log home must
+            // exist. Drop any stale SD log first — a leftover success
+            // marker from an earlier boot would fake a pass below.
+            ExploitStaging.prepareLogDir(adb, remoteLog)
+            runCatching { adb.shell("rm -f '$remoteLog'") }
+        }
 
         // 5. Run the exploit (one attempt per boot) in a streaming shell that
         // stays open for the full run — adbd kills a backgrounded process the
@@ -182,7 +198,7 @@ class RootOnBootService : Service() {
             append("EXPLOIT_ATTEMPTS=1 ")
             append("P0_ATTEMPT_TIMEOUT_SEC=115 ")
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
-            append("$remoteHelper --run-payload $remoteExploit $remoteHelper /data/local/tmp/f946b.log")
+            append("$remoteHelper --run-payload $remoteExploit $remoteHelper $remoteLog")
         }
         // Stream the exploit output. Once we see "exploit completed", the
         // supervisor will auto-trigger late-load + apply-modules (which kills
@@ -213,7 +229,7 @@ class RootOnBootService : Service() {
         }
         var exploitSucceeded = exploitDone
         if (!exploitSucceeded) {
-            val logContent = adb.readLog("/data/local/tmp/f946b.log")
+            val logContent = adb.readLog(remoteLog)
             exploitSucceeded = logContent.contains("exploit completed")
         }
         if (!exploitSucceeded) {
@@ -242,6 +258,19 @@ class RootOnBootService : Service() {
 
         // 6. Load KernelSU
         running(getString(R.string.boot_stage_kernelsu))
+        if (!launch.workDirHealthy) {
+            // Fallback mode: ksud was never staged. The root daemon healed
+            // /data/local/tmp during its permissive activation window; the
+            // su-based heal below covers the lost race where SELinux
+            // re-enforced first. Either way, verify staging before pushing.
+            ExploitStaging.prepareLogDir(adb, remoteLog)
+            val staged = ExploitStaging.pushWhenStable(adb, ksud, remoteKsud) &&
+                runCatching { adb.push(ksud, remoteKsudStage, executable = true) }.isSuccess
+            check(staged) {
+                "Work dir still unwritable after exploit — cannot stage ksud " +
+                    "for late-load (KillLogger-class module still wiping?)"
+            }
+        }
         val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 

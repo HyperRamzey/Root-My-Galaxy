@@ -53,6 +53,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     private var discoveryJob: Job? = null
     private var installJob: Job? = null
     private var activeHistoryEntry: InstallHistoryEntry? = null
+    /** True when the last exploit ran from bundled jniLibs because the
+     * work dir was unwritable (anti-log addon wipe); installKernelSu then
+     * heals + stages ksud instead of assuming the classic pushes. */
+    private var lastLaunchWasFallback = false
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val history: StateFlow<List<InstallHistoryEntry>> = mutableHistory.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -183,15 +187,27 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val bootToken = currentBootToken()
         val logPrefix = mutableState.value.log
 
-        // Stage payload + root helper onto the device via ADB push.
-        val remotePayload = REMOTE_PAYLOAD_PATH
-        val remoteHelper = REMOTE_HELPER_PATH
-        val remoteLog = REMOTE_LOG_PATH
+        // Stage payload + root helper onto the device via ADB push — unless
+        // the work dir is broken (anti-log addons like KillLogger wipe
+        // /data/local/tmp every boot and whatever recreates it labels it
+        // system_data_file, denying adbd forever). In that case bootstrap
+        // from the app's bundled jniLibs instead and defer ksud staging.
+        val launch = ExploitStaging.resolve(app, adb, payloads.profile.profileId)
+        lastLaunchWasFallback = !launch.workDirHealthy
+        val remotePayload = launch.payloadPath
+        val remoteHelper = launch.helperPath
+        val remoteLog = launch.logPath
 
-        adb.remove(remoteLog)
-        adb.push(payload, remotePayload, executable = true)
-        val helperSource = payloads.rootHelper ?: nativeHelperFile()
-        adb.push(helperSource, remoteHelper, executable = true)
+        if (launch.workDirHealthy) {
+            adb.remove(remoteLog)
+            adb.push(payload, remotePayload, executable = true)
+            val helperSource = payloads.rootHelper ?: nativeHelperFile()
+            adb.push(helperSource, remoteHelper, executable = true)
+        } else {
+            ExploitStaging.prepareLogDir(adb, remoteLog)
+            // Stale SD log would fake a success marker from an earlier boot.
+            runCatching { adb.shell("rm -f '$remoteLog'") }
+        }
         appendLog(app.getString(R.string.log_adb_staged))
 
         // Build the exploit command with environment variables.
@@ -232,11 +248,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun installKernelSu(adb: WirelessAdbSession, payloads: VerifiedPayloads) {
+        if (lastLaunchWasFallback) {
+            // The exploit ran from bundled libs; /data/local/tmp was healed
+            // by the daemon/keeper, but cover the lost race against SELinux
+            // re-enforcement before staging ksud.
+            ExploitStaging.healAfterRoot(adb)
+        }
         // Stage ksud onto the device under its feed artifact name; the
         // payload's loader resolves any /data/local/tmp/ksud-*-kdp candidate.
         val remoteKsud = "/data/local/tmp/${payloads.profile.kernelSu.url.substringAfterLast('/')}"
-        adb.push(payloads.kernelSu, remoteKsud, executable = true)
-        adb.push(payloads.kernelSu, REMOTE_KSUD_STAGE_PATH, executable = true)
+        val staged = ExploitStaging.pushWhenStable(adb, payloads.kernelSu, remoteKsud)
+        check(staged) { "Work dir still unwritable after root — cannot stage ksud" }
+        runCatching { adb.push(payloads.kernelSu, REMOTE_KSUD_STAGE_PATH, executable = true) }
         appendLog(app.getString(R.string.log_ksu_staged))
 
         // The payload supervisor already triggers --late-load + --apply-modules
@@ -244,7 +267,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         // Verify KernelSU is loaded; if not, try late-load explicitly.
         val ksuCheck = adb.shell("grep -i kernelsu /proc/modules 2>/dev/null")
         if (!ksuCheck.output.contains("kernelsu")) {
-            val lateLoad = adb.shell("$REMOTE_HELPER_PATH --late-load")
+            val lateLoad = adb.shell("${nativeHelperFile().absolutePath} --late-load")
             require(lateLoad.exitCode == 0) {
                 app.getString(R.string.error_ksu_verify, lateLoad.exitCode, lateLoad.output)
             }
