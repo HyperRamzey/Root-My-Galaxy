@@ -180,7 +180,10 @@ class PayloadRepository(private val context: Context) {
         (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 60_000
-            instanceFollowRedirects = true
+            // Never follow redirects: a 302 (captive portal, repo transfer)
+            // would silently re-point a commit-pinned URL at an arbitrary
+            // host, leaving size equality as the only integrity check.
+            instanceFollowRedirects = false
             setRequestProperty("User-Agent", "S25URoot/${BuildConfig.VERSION_NAME}")
             connect()
             require(responseCode == HttpURLConnection.HTTP_OK) { "HTTP $responseCode" }

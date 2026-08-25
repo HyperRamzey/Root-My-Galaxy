@@ -39,7 +39,20 @@ class BootReceiver : BroadcastReceiver() {
         if (!isBoot && intent.action != ACTION_RETRY) return
         if (retryIndex == 0 && !isBoot) return
         if (!AppPreferences.autoRootOnBoot(context)) return
-        if (!AppPreferences.adbPaired(context)) return
+        if (!AppPreferences.adbPaired(context)) {
+            // Silent return here made post-reinstall boots undiagnosable:
+            // nothing ran, nothing was logged, the UI kept saying ready.
+            // Record why so MainActivity renders it and the user knows to
+            // re-pair wireless debugging.
+            Log.w(TAG, "auto-root skipped: wireless debugging not paired")
+            RootOnBootProgress.update(
+                RootOnBootState.Done(
+                    false,
+                    "Auto-root skipped: wireless debugging is not paired. Open the app and pair once.",
+                ),
+            )
+            return
+        }
 
         if (NativeProbe.isKernelSuActive()) {
             // KernelSU is already live this boot; nothing to restore.

@@ -60,11 +60,24 @@ class RootOnBootService : Service() {
                     getString(R.string.boot_notification_failed, it.message ?: it.javaClass.simpleName)
                 },
             )
-            RootOnBootProgress.update(RootOnBootState.Done(result.isSuccess, message))
-            notifyResult(result.isSuccess, message)
-            RUNNING.set(false)
-            stopForeground(STOP_FOREGROUND_DETACH)
-            stopSelf()
+            if (!result.isSuccess && message.contains(LocalAdbClient.PAIRING_LOST_MARKER)) {
+                // adbd rejected our key: pairing no longer valid. Clear the
+                // flag so the boot gate stops silently skipping and surfaces
+                // a re-pair prompt instead.
+                AppPreferences.setAdbPaired(this@RootOnBootService, false)
+                android.util.Log.w("RootOnBootService", "pairing lost; adbPaired cleared for re-pair")
+            }
+            try {
+                RootOnBootProgress.update(RootOnBootState.Done(result.isSuccess, message))
+                notifyResult(result.isSuccess, message)
+            } finally {
+                // Must run even if progress/notification plumbing throws:
+                // a wedged RUNNING flag turns every later start into a
+                // silent no-op until process death.
+                RUNNING.set(false)
+                stopForeground(STOP_FOREGROUND_DETACH)
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
@@ -142,6 +155,11 @@ class RootOnBootService : Service() {
 
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
         val adb = WirelessAdbSession.open(this)
+        // Every exit path below must release the session: check() failures
+        // (interactive gate, staging, module wait) previously leaked the TLS
+        // socket and reader thread. The explicit close() calls further down
+        // are kept as fast-paths; double-close is fully guarded.
+        try {
 
         // Wake the display: with the screen off the SoC can enter suspend
         // between timing-critical exploit steps even under a partial
@@ -356,6 +374,9 @@ class RootOnBootService : Service() {
         }
         adb.close()
         check(applied) { "Module activation did not complete within ${MODULE_WAIT_MS / 1000}s" }
+        } finally {
+            runCatching { adb.close() }
+        }
     }
 
     private fun startInForeground() {

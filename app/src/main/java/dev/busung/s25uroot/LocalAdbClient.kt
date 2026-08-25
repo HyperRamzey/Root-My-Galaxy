@@ -15,6 +15,7 @@ import java.nio.ByteOrder
 import java.security.Signature
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLSocket
 
 private const val TAG = "LocalAdbClient"
@@ -75,7 +76,15 @@ class LocalAdbClient(
             write(A_STLS, A_STLS_VERSION, 0)
             val sslContext = keyManager.sslContext
             tlsSocket = sslContext.socketFactory.createSocket(socket, host, port, true) as SSLSocket
-            tlsSocket.startHandshake()
+            try {
+                tlsSocket.startHandshake()
+            } catch (t: SSLHandshakeException) {
+                // adbd rejected our client certificate: the pairing was
+                // revoked device-side or the key store was wiped. Surface a
+                // classifiable failure instead of an opaque SSL error so the
+                // boot pipeline can flag pairing as lost.
+                throw IOException("$PAIRING_LOST_MARKER: ${t.message}", t)
+            }
             Log.d(TAG, "TLS handshake succeeded")
             tlsInput = DataInputStream(tlsSocket.inputStream)
             tlsOutput = DataOutputStream(tlsSocket.outputStream)
@@ -192,13 +201,13 @@ class LocalAdbClient(
         // setprop or a failed binary looks like success.
         val wrapped = "sh -c '${command.replace("'", "'\\''")}; echo __ADB_EXIT__=$?'"
         write(A_OPEN, localId, 0, "shell:$wrapped")
-        var message = nextMessage()
+        var message = nextMessage(IDLE_TIMEOUT_MS)
         val output = StringBuilder()
 
         when (message.command) {
             A_OKAY -> {
                 while (true) {
-                    message = nextMessage()
+                    message = nextMessage(IDLE_TIMEOUT_MS)
                     val remoteId = message.arg0
                     if (message.command == A_WRTE) {
                         if (message.data != null && message.data.isNotEmpty()) {
@@ -263,7 +272,7 @@ class LocalAdbClient(
         drainStaleMessages("shellStreaming")
         Log.d(TAG, "shellStreaming: OPEN ${command.take(120)}")
         write(A_OPEN, localId, 0, "shell:$command")
-        var message = nextMessage()
+        var message = nextMessage(IDLE_TIMEOUT_MS)
         val output = StringBuilder()
         val deadline = System.currentTimeMillis() + overallTimeoutMs
         var lastOutputAt = System.currentTimeMillis()
@@ -331,7 +340,7 @@ class LocalAdbClient(
         drainStaleMessages("push")
         Log.d(TAG, "push: OPEN sync: ${localFile.name} -> $remotePath (${localFile.length()} bytes)")
         write(A_OPEN, localId, 0, "sync:")
-        var message = nextMessage()
+        var message = nextMessage(IDLE_TIMEOUT_MS)
         if (message.command != A_OKAY) error("Failed to open sync: ${cmdName(message.command)}")
         val remoteId = message.arg0
 
@@ -368,7 +377,7 @@ class LocalAdbClient(
         // already consumed by writeSync is replayed from pendingMessage.
         var sawResult = false
         while (!sawResult) {
-            message = pendingMessage ?: nextMessage()
+            message = pendingMessage ?: nextMessage(IDLE_TIMEOUT_MS)
             pendingMessage = null
             when (message.command) {
                 A_WRTE -> {
@@ -472,8 +481,15 @@ class LocalAdbClient(
         val arg0 = buf.int
         val arg1 = buf.int
         val dataLength = buf.int
-        buf.int // checksum
-        buf.int // magic
+        buf.int // checksum (advisory in the ADB protocol; not enforced)
+        val magic = buf.int
+        // Framing sanity: adbd always sends magic = !command and payloads
+        // within A_MAXDATA. Trusting a garbage length (one desynced frame)
+        // would allocate attacker-controlled sizes -> NegativeArraySize/OOM
+        // killing the process mid-boot. The ADB checksum is advisory and
+        // intentionally not enforced.
+        require(magic == command.inv()) { "ADB framing error: bad magic" }
+        require(dataLength in 0..A_MAXDATA) { "ADB framing error: length $dataLength" }
         val data = if (dataLength > 0) {
             val d = ByteArray(dataLength)
             inputStream.readFully(d)
@@ -521,6 +537,22 @@ class LocalAdbClient(
         private const val ADB_AUTH_TOKEN = 1
         private const val ADB_AUTH_SIGNATURE = 2
         private const val ADB_AUTH_RSAPUBLICKEY = 3
+
+        /**
+         * Upper bound on how long any operation may sit without hearing
+         * from adbd. The reader thread itself may block (close() unblocks
+         * it), but shell/push message waits are bounded so a silently
+         * dead transport (Wi-Fi power-save black hole, wedged adbd) turns
+         * into a failure the boot ladder can act on instead of an FGS
+         * frozen at "Running" forever. Long-running commands stream
+         * output continuously, which naturally resets this idle window.
+         */
+        const val IDLE_TIMEOUT_MS = 120_000L
+
+        /** Marker embedded in failure messages when adbd rejects our TLS
+         * client certificate — i.e. pairing was revoked or wiped and the
+         * user must re-pair. */
+        const val PAIRING_LOST_MARKER = "ADB_PAIRING_LOST"
 
         /**
          * Convenience: connect, run a shell command, close.
