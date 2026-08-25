@@ -299,7 +299,10 @@ class RootOnBootService : Service() {
             adb.push(exploit, remoteExploit, executable = true)
             adb.push(rootHelper, remoteHelper, executable = true)
             adb.push(ksud, remoteKsud, executable = true)
-            adb.push(ksud, remoteKsudStage, executable = true)
+            // .ksud-stage is intentionally NOT pre-pushed: the apply
+            // script resolves ksud from the primary path first, and the
+            // late-load fallback stages it on demand — the duplicate
+            // 4.8MB push cost ~1-2s of serial ADB per boot.
         } else {
             // Bundled binaries need no staging; only the log home must
             // exist. Drop any stale SD log first — a leftover success
@@ -314,6 +317,15 @@ class RootOnBootService : Service() {
         // to stdout via a foreground supervisor.
         running(getString(R.string.boot_stage_exploit), etaMs = RootOnBootProgress.EXPLOIT_ETA_MS)
         val exploitCmd = buildString {
+            // The app just downloaded fresh, size-verified binaries from
+            // the pinned commit — the helper's own feed self-update is
+            // redundant network time on the serial pre-exploit path.
+            append("RMG_SELF_UPDATE=0 ")
+            // Halved kernelsnitch sample count: e2e shows the x5
+            // threshold holds with 64 repeats on A715 (majority-vote
+            // confirmation absorbs the extra jitter).
+            append("RMG_KSNITCH_REPEAT=64 ")
+            append("RMG_KSNITCH_AVERAGE=4 ")
             append("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID} ")
             append("SLIDE_SOURCE=tracefs ")
             append("EXPLOIT_ATTEMPTS=1 ")

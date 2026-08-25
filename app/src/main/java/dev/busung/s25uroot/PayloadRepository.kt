@@ -42,7 +42,9 @@ class PayloadRepository(private val context: Context) {
         try {
             val profile = loadTargets().firstOrNull { it.matches(snapshot) }
             if (profile != null) {
-                runCatching { cacheManifest() }
+                // loadTargets() already persisted the manifest bytes for
+                // offline fallback — a second download here doubled the
+                // serial network cost of every boot for zero information.
                 return profile
             }
         } catch (e: Exception) {
@@ -52,11 +54,6 @@ class PayloadRepository(private val context: Context) {
             throw e
         }
         error(context.getString(R.string.repo_no_profile))
-    }
-
-    private fun cacheManifest() {
-        val bytes = downloadBytes(rawUrl(resolveMainCommit(), MANIFEST_PATH), MAX_MANIFEST_BYTES)
-        File(context.filesDir, MANIFEST_CACHE).writeBytes(bytes)
     }
 
     private fun loadTargetsFromCache(): List<TargetProfile>? = runCatching {
