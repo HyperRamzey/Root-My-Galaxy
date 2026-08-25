@@ -53,6 +53,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
@@ -875,8 +876,46 @@ private fun InstallStatusCard(installState: InstallUiState, onInstall: () -> Uni
 }
 
 @Composable
+/**
+ * Scrollable monospace console for the live pipeline log. Sized to show
+ * at least [LiveLog.UI_VISIBLE_ROWS] entries at once; auto-scrolls to the
+ * newest line unless the user is reading back.
+ */
+private fun LiveLogConsole(lines: List<String>) {
+    if (lines.isEmpty()) return
+    val listState = rememberLazyListState()
+    // Follow the tail as new lines arrive; stop following when the user
+    // scrolls up so they can read history in peace.
+    val followTail = listState.firstVisibleItemIndex >= lines.lastIndex - 1
+    LaunchedEffect(lines.size, followTail) {
+        if (followTail && lines.isNotEmpty()) {
+            listState.animateScrollToItem(lines.lastIndex)
+        }
+    }
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = (LiveLog.UI_VISIBLE_ROWS * 18).dp, max = 220.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        itemsIndexed(lines) { index, line ->
+            Text(
+                text = "%02d  %s".format(index + 1, line),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun RootOnBootProgressCard() {
     val state by RootOnBootProgress.state.collectAsStateWithLifecycle()
+    val liveLog by LiveLog.lines.collectAsStateWithLifecycle()
     if (state is RootOnBootState.Idle) return
 
     Card(
@@ -950,6 +989,7 @@ private fun RootOnBootProgressCard() {
                             fontFamily = FontFamily.Monospace,
                         )
                     }
+                    LiveLogConsole(liveLog)
                     // Elapsed
                     Text(
                         "${s.elapsedMs / 1000}s elapsed",
@@ -970,6 +1010,8 @@ private fun RootOnBootProgressCard() {
                         )
                         Text(s.message, style = MaterialTheme.typography.bodyMedium)
                     }
+                    // Keep the run's log visible after completion.
+                    LiveLogConsole(liveLog)
                 }
                 is RootOnBootState.Idle -> {}
             }

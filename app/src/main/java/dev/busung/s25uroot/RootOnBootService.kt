@@ -52,6 +52,8 @@ class RootOnBootService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // Fresh timeline per pipeline run (notification + app console).
+        LiveLog.clear()
         scope.launch {
             val result = runCatching { runRootOnBoot() }
             val message = result.fold(
@@ -159,6 +161,13 @@ class RootOnBootService : Service() {
         }
         val started = System.currentTimeMillis()
         fun running(stage: String, lastLine: String = "", etaMs: Long = -1) {
+            // Stage transitions join the shared live log so the expanded
+            // notification and the in-app console show one timeline.
+            if (lastLine.isBlank()) {
+                LiveLog.add("• $stage")
+            } else {
+                LiveLog.add("$stage — $lastLine")
+            }
             RootOnBootProgress.update(
                 RootOnBootState.Running(
                     stage = stage,
@@ -292,11 +301,18 @@ class RootOnBootService : Service() {
         // zygote and drops the ADB connection), so we must NOT wait for the
         // stream to close — return as soon as the success marker appears.
         var exploitDone = false
+        // Only feed NEW streamed bytes into the live log: `accumulated`
+        // grows monotonically, so remember how much we already consumed.
+        var logConsumed = 0
         val exploitOutput = try {
             adb.runStreaming(
                 exploitCmd,
                 shouldStop = { exploitDone },
             ) { accumulated ->
+                if (accumulated.length > logConsumed) {
+                    LiveLog.addAll(accumulated.substring(logConsumed))
+                    logConsumed = accumulated.length
+                }
                 val lastLine = accumulated.lineSequence()
                     .filter { it.isNotBlank() }
                     .lastOrNull()
@@ -417,11 +433,24 @@ class RootOnBootService : Service() {
         manager.notify(NOTIFICATION_ID, builder.build())
     }
 
-    private fun buildNotification(text: String): Notification =
-        baseNotification(text)
+    private fun buildNotification(text: String): Notification {
+        val builder = baseNotification(text)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
-            .build()
+        // Expandable style: show the most recent pipeline/exploit lines so
+        // the user can see what is happening without opening the app.
+        val recent = LiveLog.recent(LiveLog.NOTIFICATION_LINES)
+        if (recent.isNotEmpty()) {
+            val inbox = NotificationCompat.InboxStyle()
+                .setBigContentTitle(getString(R.string.app_name))
+                .setSummaryText(text)
+            for (line in recent) {
+                inbox.addLine(line)
+            }
+            builder.setStyle(inbox)
+        }
+        return builder.build()
+    }
 
     private fun baseNotification(text: String): NotificationCompat.Builder {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
