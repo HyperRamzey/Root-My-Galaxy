@@ -49,6 +49,12 @@ class LocalAdbClient(
     @Volatile private var readerError: Throwable? = null
     private var readerThread: Thread? = null
 
+    /** Single-thread executor that performs socket writes so each can be
+     * bounded by [WRITE_TIMEOUT_MS] (soTimeout does not cover writes). */
+    private val writeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "adb-writer").apply { isDaemon = true }
+    }
+
     // A WRTE consumed by writeSync while hunting for its OKAY ack (adbd can
     // interleave sync-protocol data before the ack). The push final-response
     // loop checks this slot first so the result is never lost.
@@ -457,20 +463,38 @@ class LocalAdbClient(
         writeRaw(command, arg0, arg1, "$data\u0000".toByteArray())
     }
 
+    /**
+     * Writes are NOT covered by soTimeout (that only bounds reads), so a
+     * silently dead transport (Wi-Fi power-save black hole) can block a
+     * tiny ack forever with the buffers wedged. Run every write on a
+     * helper thread with a hard deadline; on expiry close the socket,
+     * which unblocks the writer with an exception and poisons the reader.
+     */
     private fun writeRaw(command: Int, arg0: Int, arg1: Int, payload: ByteArray?) {
-        val length = payload?.size ?: 0
-        val checksum = payload?.sumOf { it.toInt() and 0xFF } ?: 0
-        val magic = command xor -0x1
-        val header = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)
-        header.putInt(command)
-        header.putInt(arg0)
-        header.putInt(arg1)
-        header.putInt(length)
-        header.putInt(checksum)
-        header.putInt(magic)
-        outputStream.write(header.array())
-        if (payload != null) outputStream.write(payload)
-        outputStream.flush()
+        val future = writeExecutor.submit<Any?> {
+            val length = payload?.size ?: 0
+            val checksum = payload?.sumOf { it.toInt() and 0xFF } ?: 0
+            val magic = command xor -0x1
+            val header = ByteBuffer.allocate(HEADER_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+            header.putInt(command)
+            header.putInt(arg0)
+            header.putInt(arg1)
+            header.putInt(length)
+            header.putInt(checksum)
+            header.putInt(magic)
+            outputStream.write(header.array())
+            if (payload != null) outputStream.write(payload)
+            outputStream.flush()
+            null
+        }
+        try {
+            future.get(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            future.cancel(true)
+            runCatching { socket.close() }
+            runCatching { tlsSocket?.close() }
+            throw IOException("ADB write stalled >${WRITE_TIMEOUT_MS}ms; transport closed", e)
+        }
     }
 
     private fun read(): AdbMessage {
@@ -508,7 +532,8 @@ class LocalAdbClient(
             try { tlsSocket.close() } catch (_: Exception) {}
         }
         // Closing the socket unblocks the reader thread's readFully, which
-        // then pushes POISON and exits.
+        // then pushes POISON and exits. Also unblocks a wedged writer.
+        writeExecutor.shutdownNow()
         readerThread?.interrupt()
     }
 
@@ -548,6 +573,9 @@ class LocalAdbClient(
          * output continuously, which naturally resets this idle window.
          */
         const val IDLE_TIMEOUT_MS = 120_000L
+
+        /** Hard deadline for any single ADB message write. */
+        const val WRITE_TIMEOUT_MS = 30_000L
 
         /** Marker embedded in failure messages when adbd rejects our TLS
          * client certificate — i.e. pairing was revoked or wiped and the

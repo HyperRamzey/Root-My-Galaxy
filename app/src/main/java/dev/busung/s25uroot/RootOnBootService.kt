@@ -82,6 +82,9 @@ class RootOnBootService : Service() {
         return START_NOT_STICKY
     }
 
+    @Volatile
+    private var activeSession: WirelessAdbSession? = null
+
     private fun runRootOnBoot() {
         // The exploit choreography is timing-sensitive: a suspended SoC
         // (screen off -> deep idle) desynchronizes it — observed as a hard
@@ -101,6 +104,8 @@ class RootOnBootService : Service() {
             "rmg:RootOnBoot",
         )
         wakeLock?.acquire(PIPELINE_WAKELOCK_MS)
+        // Live handle the watchdog uses to force-unwind a wedged pipeline.
+        activeSession = null
         val previousStayOn = runCatching {
             Settings.Global.getInt(
                 contentResolver,
@@ -117,9 +122,23 @@ class RootOnBootService : Service() {
                     BatteryManager.BATTERY_PLUGGED_WIRELESS,
             )
         }
+        // Failsafe watchdog: no matter how deep we are blocked inside a
+        // wedged ADB transport or a hung exploit, force the pipeline to
+        // unwind at the same bound as the wakelock. Closing the session
+        // makes every in-flight operation throw; the finally blocks then
+        // restore stay-on, release the wake lock and report failure.
+        val watchdog = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "rmg-watchdog").apply { isDaemon = true }
+        }
         try {
+            watchdog.schedule({
+                android.util.Log.e("RootOnBootService", "watchdog fired after ${PIPELINE_WAKELOCK_MS / 1000}s; forcing session close")
+                runCatching { activeSession?.close() }
+            }, PIPELINE_WAKELOCK_MS + 60_000, java.util.concurrent.TimeUnit.MILLISECONDS)
             runRootOnBootLocked()
         } finally {
+            watchdog.shutdownNow()
+            activeSession = null
             runCatching {
                 Settings.Global.putInt(
                     contentResolver,
@@ -155,6 +174,7 @@ class RootOnBootService : Service() {
 
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
         val adb = WirelessAdbSession.open(this)
+        activeSession = adb
         // Every exit path below must release the session: check() failures
         // (interactive gate, staging, module wait) previously leaked the TLS
         // socket and reader thread. The explicit close() calls further down
