@@ -86,19 +86,11 @@ class BootReceiver : BroadcastReceiver() {
         }
     }
 
+
     private fun scheduleRetry(context: Context, index: Int) {
         if (index > MAX_RETRIES) return
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent(context, BootReceiver::class.java).apply {
-            action = ACTION_RETRY
-            putExtra(EXTRA_RETRY, index)
-        }
-        val pending = PendingIntent.getBroadcast(
-            context,
-            RETRY_REQUEST_CODE_BASE + index,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val pending = retryPendingIntent(context, index)
         val delayMs = when (index) {
             1 -> 2 * 60_000L
             2 -> 5 * 60_000L
@@ -137,6 +129,30 @@ class BootReceiver : BroadcastReceiver() {
         private const val TAG = "BootReceiver"
         const val ACTION_RETRY = "dev.busung.s25uroot.action.AUTO_ROOT_RETRY"
         const val EXTRA_RETRY = "retry_index"
+    /** Exact-match PI factory shared by scheduling and cancellation so a
+     * successful run can defuse every pending rung (each alarm wake is a
+     * battery cost once root is already live). */
+    private fun retryPendingIntent(context: Context, index: Int): PendingIntent {
+        val intent = Intent(context, BootReceiver::class.java).apply {
+            action = ACTION_RETRY
+            putExtra(EXTRA_RETRY, index)
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            RETRY_REQUEST_CODE_BASE + index,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    /** Defuse all pending retry rungs. */
+    fun cancelRetryAlarms(context: Context) {
+        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        for (index in 1..MAX_RETRIES) {
+            am.cancel(retryPendingIntent(context, index))
+        }
+    }
+
         const val MAX_RETRIES = 3
         const val RETRY_REQUEST_CODE_BASE = 4200
     }

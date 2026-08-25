@@ -209,7 +209,8 @@ class RootOnBootService : Service() {
                 RootStatusProbe.storeBootReceipt(this)
                 LiveLog.add("• KernelSU already active (shell su) — skipping")
                 running(getString(R.string.boot_stage_connecting), "already rooted")
-                adb.close()
+                BootReceiver.cancelRetryAlarms(this)
+                batteryWindDown(adb)
                 return
             }
         }
@@ -432,11 +433,38 @@ class RootOnBootService : Service() {
             }
             Thread.sleep(10_000)
         }
-        adb.close()
+        // Modules confirmed: full battery wind-down before dropping the
+        // session — cancel pending retry alarms, put the display back to
+        // sleep (we woke it for the choreography) and switch wireless
+        // debugging off so adbd stops holding the Wi-Fi radio awake.
+        BootReceiver.cancelRetryAlarms(this)
+        RootStatusProbe.storeBootReceipt(this)
+        batteryWindDown(adb)
         check(applied) { "Module activation did not complete within ${MODULE_WAIT_MS / 1000}s" }
         } finally {
             runCatching { adb.close() }
         }
+    }
+
+    /**
+     * Post-success power hygiene, executed while the ADB session is still
+     * alive. Order matters: display sleep first (no further input needed),
+     * then wireless debugging off (adbd releases the radio), then the
+     * caller closes the socket.
+     */
+    private fun batteryWindDown(adb: WirelessAdbSession) {
+        LiveLog.add("• Battery wind-down: display sleep + wireless adb off")
+        // Only put the display to sleep when nobody is actively using the
+        // phone (keyguard locked OR screen already off = unattended boot).
+        val km = getSystemService(android.app.KeyguardManager::class.java)
+        val pm = getSystemService(PowerManager::class.java)
+        val userActive = pm?.isInteractive == true && km?.isKeyguardLocked == false
+        if (!userActive) {
+            runCatching { adb.shell("input keyevent KEYCODE_SLEEP") }
+        }
+        runCatching { adb.shell("settings put global adb_wifi_enabled 0") }
+        runCatching { adb.shell("setprop service.adb.tls.port \"\"") }
+        adb.close()
     }
 
     private fun startInForeground() {
