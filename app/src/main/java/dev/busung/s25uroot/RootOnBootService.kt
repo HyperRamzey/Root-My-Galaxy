@@ -182,7 +182,7 @@ class RootOnBootService : Service() {
         running(getString(R.string.boot_stage_connecting))
 
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
-        val adb = WirelessAdbSession.open(this)
+        var adb = WirelessAdbSession.open(this)
         activeSession = adb
         // Every exit path below must release the session: check() failures
         // (interactive gate, staging, module wait) previously leaked the TLS
@@ -369,8 +369,24 @@ class RootOnBootService : Service() {
         }
         var exploitSucceeded = exploitDone
         if (!exploitSucceeded) {
-            val logContent = adb.readLog(remoteLog)
-            exploitSucceeded = logContent.contains("exploit completed")
+            // The stream socket may have died mid-run (zygote-kill drop,
+            // wireless flake) while the device-side supervisor kept going:
+            // f946b.log is the source of truth. Re-read it over a FRESH
+            // session — the old socket is broken by definition here — with
+            // a bounded retry, and adopt the fresh session for the
+            // remaining stages if the run actually succeeded.
+            runCatching { adb.close() }
+            repeat(3) {
+                runCatching {
+                    adb = WirelessAdbSession.open(this, portDiscoveryTimeoutMs = 15_000)
+                    if (adb.readLog(remoteLog).contains("exploit completed")) {
+                        exploitSucceeded = true
+                        LiveLog.add("• stream dropped; outcome verified via fresh session")
+                    }
+                }
+                if (exploitSucceeded) return@repeat
+                Thread.sleep(5_000)
+            }
         }
         if (!exploitSucceeded) {
             // One clean attempt per boot: a burned attempt cannot be repeated
