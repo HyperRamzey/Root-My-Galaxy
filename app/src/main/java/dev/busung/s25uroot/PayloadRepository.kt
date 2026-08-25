@@ -188,10 +188,10 @@ class PayloadRepository(private val context: Context) {
 
     companion object {
         private const val COMMIT_API_URL =
-            "https://api.github.com/repos/HyperRamzey/Root-My-Galaxy-Payloads/git/ref/heads/pinning-test"
+            "https://api.github.com/repos/HyperRamzey/Root-My-Galaxy-Payloads/git/ref/heads/main"
         private const val RAW_REPOSITORY =
             "https://raw.githubusercontent.com/HyperRamzey/Root-My-Galaxy-Payloads"
-        private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/pinning-test/"
+        private const val MUTABLE_RAW_PREFIX = "$RAW_REPOSITORY/main/"
         private const val MANIFEST_PATH = "support/targets-v3.json"
         private const val MANIFEST_CACHE = "payloads/targets-cache.json"
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
