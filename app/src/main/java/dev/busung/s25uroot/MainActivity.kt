@@ -68,6 +68,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.InvertColors
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Delete
@@ -357,11 +358,21 @@ private fun RootApp(
         } else {
             updateStatus = UpdateStatus.Downloading(info, 0f)
             scope.launch {
-                val apk = AppUpdater.downloadApk(context, apkUrl) { progress ->
+                val apk = AppUpdater.downloadApk(
+                    context,
+                    apkUrl,
+                    expectedSize = info.size,
+                    expectedSha256 = info.sha256,
+                ) { progress ->
                     updateStatus = UpdateStatus.Downloading(info, progress)
                 }
                 if (apk == null || !AppUpdater.installApk(context, apk)) {
-                    Toast.makeText(context, context.getString(R.string.updater_download_failed), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.updater_download_failed) + " " +
+                            context.getString(R.string.updater_install_hint),
+                        Toast.LENGTH_LONG,
+                    ).show()
                     AppUpdater.openReleasesPage(context)
                 }
                 updateStatus = UpdateStatus.Available(info)
@@ -2354,6 +2365,7 @@ private fun ThemeModeSelector(
                         AppThemeMode.System -> Icons.Rounded.BrightnessAuto
                         AppThemeMode.Light -> Icons.Rounded.LightMode
                         AppThemeMode.Dark -> Icons.Rounded.DarkMode
+                        AppThemeMode.Black -> Icons.Rounded.InvertColors
                     },
                     contentDescription = null,
                 )
@@ -2671,4 +2683,5 @@ private fun themeModeLabel(themeMode: AppThemeMode): String = when (themeMode) {
     AppThemeMode.System -> stringResource(R.string.theme_system)
     AppThemeMode.Light -> stringResource(R.string.theme_light)
     AppThemeMode.Dark -> stringResource(R.string.theme_dark)
+    AppThemeMode.Black -> stringResource(R.string.theme_black)
 }

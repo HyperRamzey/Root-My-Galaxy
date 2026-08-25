@@ -32,6 +32,7 @@
     <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="theme_black">OLED black</string>
     <string name="material_color">Theme</string>
     <string name="material_color_description">Change the look</string>
     <string name="language_system">Follow system</string>
@@ -196,6 +197,7 @@
     <string name="updater_button_download">Download &amp; Install</string>
     <string name="updater_downloading">Downloading…</string>
     <string name="updater_download_failed">Download failed</string>
+    <string name="updater_install_hint">If the system refuses to install, allow installs from this app (or pause Play Protect) and retry from Releases.</string>
     <string name="updater_check">Check for updates</string>
     <string name="updater_checking">Checking for updates…</string>
     <string name="updater_up_to_date">You\'re up to date</string>

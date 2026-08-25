@@ -53,12 +53,13 @@ fun RootMyGalaxyTheme(
 ) {
     val context = LocalContext.current
     val systemDarkTheme = isSystemInDarkTheme()
+    val oledBlack = themeMode == AppThemeMode.Black
     val darkTheme = when (themeMode) {
         AppThemeMode.System -> systemDarkTheme
         AppThemeMode.Light -> false
-        AppThemeMode.Dark -> true
+        AppThemeMode.Dark, AppThemeMode.Black -> true
     }
-    val colors = if (accentColor == AccentColor.Dynamic) {
+    var colors = if (accentColor == AccentColor.Dynamic) {
         if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
     } else {
         val generatedColors = rememberDynamicColorScheme(
@@ -74,6 +75,29 @@ fun RootMyGalaxyTheme(
                 onSurfaceVariant = lerp(generatedColors.surface, generatedColors.onSurface, 0.8f),
             )
         }
+    }
+
+    if (oledBlack) {
+        // True-black OLED surfaces: background and surface collapse to pure
+        // #000000 (pixels off), containers stay barely-lit so elevation and
+        // cards remain distinguishable. Accent roles are untouched.
+        val black = Color.Black
+        val nearBlack = Color(0xFF0A0A0A)
+        val containerLow = Color(0xFF111111)
+        val containerHigh = Color(0xFF161616)
+        val containerHighest = Color(0xFF1C1C1C)
+        colors = colors.copy(
+            background = black,
+            onBackground = colors.onBackground,
+            surface = black,
+            surfaceContainerLowest = black,
+            surfaceContainerLow = nearBlack,
+            surfaceContainer = containerLow,
+            surfaceContainerHigh = containerHigh,
+            surfaceContainerHighest = containerHighest,
+            surfaceVariant = Color(0xFF141414),
+            surfaceTint = Color.Transparent,
+        )
     }
 
     SideEffect {

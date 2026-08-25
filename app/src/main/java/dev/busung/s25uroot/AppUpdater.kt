@@ -16,6 +16,10 @@ data class UpdateInfo(
     val versionName: String,
     val apkUrl: String?,
     val releaseUrl: String,
+    /** Declared asset size in bytes (GitHub API), -1 if unknown. */
+    val size: Long = -1L,
+    /** SHA-256 digest of the asset ("sha256:..." field), null if absent. */
+    val sha256: String? = null,
 )
 
 const val ROOT_MY_GALAXY_URL = "https://github.com/HyperRamzey/Root-My-Galaxy"
@@ -41,11 +45,20 @@ object AppUpdater {
                 val tag = json.optString("tag_name").trim().removePrefix("v")
                 if (tag.isBlank()) return@withContext null
                 var apkUrl: String? = null
+                var apkSize = -1L
+                var apkSha256: String? = null
                 json.optJSONArray("assets")?.let { assets ->
                     for (i in 0 until assets.length()) {
                         val asset = assets.getJSONObject(i)
                         if (asset.optString("name").endsWith(".apk")) {
                             apkUrl = asset.optString("browser_download_url").ifEmpty { null }
+                            apkSize = if (asset.has("size") && !asset.isNull("size")) {
+                                asset.getLong("size")
+                            } else -1L
+                            // GitHub returns digests like "sha256:abcdef..."
+                            apkSha256 = asset.optString("digest")
+                                .takeIf { it.startsWith("sha256:") }
+                                ?.substringAfter("sha256:")
                             break
                         }
                     }
@@ -54,6 +67,8 @@ object AppUpdater {
                     versionName = tag,
                     apkUrl = apkUrl,
                     releaseUrl = json.optString("html_url").ifEmpty { RELEASES_PAGE },
+                    size = apkSize,
+                    sha256 = apkSha256,
                 )
             } finally {
                 connection.disconnect()
@@ -87,11 +102,15 @@ object AppUpdater {
     suspend fun downloadApk(
         context: Context,
         url: String,
+        expectedSize: Long = -1L,
+        expectedSha256: String? = null,
         onProgress: (Float) -> Unit = {},
     ): File? = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val target = File(dir, "update.apk")
         try {
+            // Never grow a stale file from a previous failed attempt.
+            target.delete()
             val connection = URL(url).openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "GET"
@@ -99,7 +118,11 @@ object AppUpdater {
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 30_000
                 if (connection.responseCode != HttpURLConnection.HTTP_OK) return@withContext null
-                val total = connection.contentLength
+                val total = when {
+                    expectedSize > 0 -> expectedSize.toInt()
+                    else -> connection.contentLength
+                }
+                val digest = java.security.MessageDigest.getInstance("SHA-256")
                 val buffer = ByteArray(64 * 1024)
                 var downloaded = 0L
                 connection.inputStream.use { input ->
@@ -108,6 +131,7 @@ object AppUpdater {
                             val read = input.read(buffer)
                             if (read < 0) break
                             output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
                             downloaded += read
                             if (total > 0) {
                                 onProgress((downloaded.toFloat() / total).coerceIn(0f, 1f))
@@ -115,7 +139,22 @@ object AppUpdater {
                         }
                     }
                 }
+                // Integrity gates: a truncated or corrupted transfer used
+                // to reach the system installer and fail as a cryptic
+                // "App not installed" (often blamed on Play Protect).
                 if (target.length() == 0L) return@withContext null
+                if (expectedSize > 0 && target.length() != expectedSize) {
+                    android.util.Log.e("AppUpdater",
+                        "size mismatch: got ${target.length()} want $expectedSize")
+                    target.delete(); return@withContext null
+                }
+                if (!expectedSha256.isNullOrBlank()) {
+                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                        android.util.Log.e("AppUpdater", "sha256 mismatch: got $actual")
+                        target.delete(); return@withContext null
+                    }
+                }
                 target
             } finally {
                 connection.disconnect()

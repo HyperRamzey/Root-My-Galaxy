@@ -20,11 +20,12 @@ enum class AccentColor(val storedValue: String) {
 enum class AppThemeMode(val storedValue: String) {
     System("system"),
     Light("light"),
-    Dark("dark");
+    Dark("dark"),
+    Black("black");
 
     companion object {
         fun fromStoredValue(value: String?): AppThemeMode =
-            entries.firstOrNull { it.storedValue == value } ?: System
+            entries.firstOrNull { it.storedValue == value } ?: Black
     }
 }
 
