@@ -193,6 +193,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Auto-root path: when launched by RootOnBootService over ADB the
+        // activity turns the screen on itself and stays visible above the
+        // lockscreen dismissal, helping keep the SoC out of idle for the
+        // timing-sensitive choreography. Secure keyguards still require
+        // their credential (we never show content over them).
+        setTurnScreenOn(true)
+        setShowWhenLocked(false)
         window.isNavigationBarContrastEnforced = false
         requestBatteryOptimizationExemption()
         requestNotificationPermissionIfNeeded()

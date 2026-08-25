@@ -36,6 +36,7 @@ object RootOnBootProgress {
         mutable.value = RootOnBootState.Idle
     }
 
-    /** Typical exploit duration observed on SM-F946B (~180s). */
-    const val EXPLOIT_ETA_MS = 180_000L
+    /** Typical exploit duration observed on SM-F946B (~300s incl. boot
+     * quiet-window wait; supervisor budget is 600s). */
+    const val EXPLOIT_ETA_MS = 300_000L
 }

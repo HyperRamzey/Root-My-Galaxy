@@ -196,6 +196,27 @@ class RootOnBootService : Service() {
         // on + wakelock keeps the pipeline window stable.
         runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
 
+        // Unlock attempt (no-passkey devices only): wm dismiss-keyguard
+        // clears an unsecured keyguard; legacy MENU key and an upward
+        // swipe cover One UI variants where dismiss alone is a no-op.
+        // A secure credential can never be bypassed — the interactivity
+        // gate below then simply waits for the user to unlock.
+        running(getString(R.string.boot_stage_connecting), "dismissing keyguard")
+        runCatching { adb.shell("wm dismiss-keyguard") }
+        runCatching { adb.shell("input keyevent 82") }
+        runCatching {
+            adb.shell("input touchscreen swipe 500 1900 500 700 200")
+        }
+
+        // Bring MainActivity to the foreground over ADB (shell may always
+        // start activities, unlike a background FGS). A visible activity
+        // plus the wake lock and STAY_ON pin keeps the SoC out of idle for
+        // the whole timing-sensitive window.
+        runCatching {
+            adb.shell("am start -n $packageName/.MainActivity")
+            LiveLog.add("• MainActivity foregrounded")
+        }
+
         // Hard gate: refuse to run the choreography unless the display is
         // verifiably interactive. A suspending SoC mid-sequence has been
         // observed to corrupt kernel state and hang the device outright —
@@ -209,6 +230,7 @@ class RootOnBootService : Service() {
                 break
             }
             runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+            runCatching { adb.shell("input keyevent 82") }
             Thread.sleep(2_000)
         }
         check(interactive) {
