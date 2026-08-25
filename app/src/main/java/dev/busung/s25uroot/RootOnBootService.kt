@@ -153,7 +153,7 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBootLocked() {
-        if (RootStatusProbe.isActive()) {
+        if (RootStatusProbe.isRootLiveThisBoot(this)) {
             // Already rooted this boot (manual run or earlier retry): keep
             // the alarm retries harmless and report success immediately.
             AppPreferences.setBootRetryCount(this, 0)
@@ -196,26 +196,28 @@ class RootOnBootService : Service() {
         // on + wakelock keeps the pipeline window stable.
         runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
 
-        // Unlock attempt (no-passkey devices only): wm dismiss-keyguard
-        // clears an unsecured keyguard; legacy MENU key and an upward
-        // swipe cover One UI variants where dismiss alone is a no-op.
-        // A secure credential can never be bypassed — the interactivity
-        // gate below then simply waits for the user to unlock.
-        running(getString(R.string.boot_stage_connecting), "dismissing keyguard")
-        runCatching { adb.shell("wm dismiss-keyguard") }
-        runCatching { adb.shell("input keyevent 82") }
+        // Decisive KernelSU check via the ADB session itself. The app-domain
+        // probes lie in two real scenarios: (a) SELinux hides /proc/modules
+        // and (b) sucompat denies our uid when manager registration was
+        // skipped (manual-launcher roots) — yet shell uid 2000 is ALWAYS
+        // allowed once KernelSU is loaded. If shell-su answers uid=0 the
+        // device is already rooted: record the receipt and exit QUIETLY —
+        // no unlock, no activity foregrounding, no focus theft.
         runCatching {
-            adb.shell("input touchscreen swipe 500 1900 500 700 200")
+            val idOut = adb.shell("su -c id")
+            if (idOut.output.contains("uid=0")) {
+                RootStatusProbe.storeBootReceipt(this)
+                LiveLog.add("• KernelSU already active (shell su) — skipping")
+                running(getString(R.string.boot_stage_connecting), "already rooted")
+                adb.close()
+                return
+            }
         }
 
-        // Bring MainActivity to the foreground over ADB (shell may always
-        // start activities, unlike a background FGS). A visible activity
-        // plus the wake lock and STAY_ON pin keeps the SoC out of idle for
-        // the whole timing-sensitive window.
-        runCatching {
-            adb.shell("am start -n $packageName/.MainActivity")
-            LiveLog.add("• MainActivity foregrounded")
-        }
+        // NOTE: the unlock + MainActivity-foreground block lives further
+        // down, immediately before the exploit launch. Running it here
+        // stole screen focus even on boots where KernelSU was already
+        // active and every later stage skipped — pure distraction.
 
         // Hard gate: refuse to run the choreography unless the display is
         // verifiably interactive. A suspending SoC mid-sequence has been

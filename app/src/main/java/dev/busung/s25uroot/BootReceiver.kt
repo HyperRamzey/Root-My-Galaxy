@@ -54,7 +54,7 @@ class BootReceiver : BroadcastReceiver() {
             return
         }
 
-        if (RootStatusProbe.isActive()) {
+        if (RootStatusProbe.isRootLiveThisBoot(context)) {
             // KernelSU is already live this boot; nothing to restore.
             return
         }
