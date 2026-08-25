@@ -78,25 +78,29 @@ fun RootMyGalaxyTheme(
     }
 
     if (oledBlack) {
-        // True-black OLED surfaces: background and surface collapse to pure
-        // #000000 (pixels off), containers stay barely-lit so elevation and
-        // cards remain distinguishable. Accent roles are untouched.
+        // True-black OLED: EVERY surface role collapses to pure #000000 so
+        // no pixel above the taskbar draws gray. Only a hairline
+        // outlineVariant survives so card boundaries remain perceivable;
+        // accent and text roles are untouched.
         val black = Color.Black
-        val nearBlack = Color(0xFF0A0A0A)
-        val containerLow = Color(0xFF111111)
-        val containerHigh = Color(0xFF161616)
-        val containerHighest = Color(0xFF1C1C1C)
+        val hairline = Color(0xFF0F0F0F)
         colors = colors.copy(
             background = black,
             onBackground = colors.onBackground,
             surface = black,
+            onSurface = colors.onSurface,
             surfaceContainerLowest = black,
-            surfaceContainerLow = nearBlack,
-            surfaceContainer = containerLow,
-            surfaceContainerHigh = containerHigh,
-            surfaceContainerHighest = containerHighest,
-            surfaceVariant = Color(0xFF141414),
+            surfaceContainerLow = black,
+            surfaceContainer = black,
+            surfaceContainerHigh = black,
+            surfaceContainerHighest = black,
+            surfaceVariant = black,
+            onSurfaceVariant = colors.onSurfaceVariant,
+            surfaceDim = black,
+            surfaceBright = black,
             surfaceTint = Color.Transparent,
+            outlineVariant = hairline,
+            scrim = black,
         )
     }
 
