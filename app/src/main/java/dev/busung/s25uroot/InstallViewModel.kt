@@ -80,6 +80,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 )
                 return@launch
             }
+            if (RootStatusProbe.isManagerUnregistered()) {
+                // Root is live but this boot's exploit bypassed manager
+                // registration (e.g. manual launcher). Say so instead of
+                // the misleading "Not installed".
+                mutableState.value = InstallUiState(
+                    phase = InstallPhase.Ready,
+                    message = app.getString(R.string.status_root_no_manager),
+                    probeOutput = probe,
+                    log = "$probe\n[-] KernelSU active; manager uid not registered this boot",
+                )
+                return@launch
+            }
             try {
                 val profile = repository.resolveTarget(DeviceSnapshot.current())
                 mutableState.value = InstallUiState(
@@ -359,7 +371,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun detectInstalled(): Boolean {
-        if (NativeProbe.isKernelSuActive()) return true
+        if (RootStatusProbe.isActive()) return true
         val bootToken = currentBootToken() ?: return false
         val receipt = app.getSharedPreferences(INSTALL_RECEIPT, Application.MODE_PRIVATE)
         return receipt.getString(RECEIPT_BOOT_TOKEN, null) == bootToken &&

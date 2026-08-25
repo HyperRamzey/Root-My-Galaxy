@@ -92,6 +92,7 @@
     <string name="phase_failed">Review the failure point in the log below</string>
 
     <string name="status_ksu_active">KernelSU active</string>
+    <string name="status_root_no_manager">Root is active, but this app was not registered as KernelSU manager on this boot. Enable Auto re-apply and reboot (or tap Install) to register.</string>
     <string name="status_not_installed">Not installed</string>
     <string name="status_support_failed">Support check failed</string>
     <string name="status_checking_github">Checking GitHub support manifest</string>

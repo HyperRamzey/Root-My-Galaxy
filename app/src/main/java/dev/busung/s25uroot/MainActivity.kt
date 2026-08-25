@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -123,6 +124,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -848,7 +850,11 @@ private fun InstallStatusCard(installState: InstallUiState, onInstall: () -> Uni
                 } else {
                     Text(
                         text = when (installState.phase) {
-                            InstallPhase.Ready -> stringResource(R.string.status_not_installed)
+                            // Ready normally means "Not installed", but the
+                            // ViewModel may override it (e.g. root live yet
+                            // manager unregistered) — prefer its message.
+                            InstallPhase.Ready -> installState.message
+                                .ifBlank { stringResource(R.string.status_not_installed) }
                             else -> installState.message
                         },
                         style = MaterialTheme.typography.titleMedium,
@@ -884,14 +890,71 @@ private fun InstallStatusCard(installState: InstallUiState, onInstall: () -> Uni
 private fun LiveLogConsole(lines: List<String>) {
     if (lines.isEmpty()) return
     val listState = rememberLazyListState()
-    // Follow the tail as new lines arrive; stop following when the user
-    // scrolls up so they can read history in peace.
-    val followTail = listState.firstVisibleItemIndex >= lines.lastIndex - 1
-    LaunchedEffect(lines.size, followTail) {
-        if (followTail && lines.isNotEmpty()) {
-            listState.animateScrollToItem(lines.lastIndex)
+
+    // --- Follow-tail policy -------------------------------------------------
+    // follow=true: console sticks to the newest line with a spring.
+    // Any user scroll gesture pauses following. Following resumes
+    // automatically after 10 s without user interaction AND no newer
+    // line than the one the user stopped at (i.e. the log is stable).
+    var follow by remember { androidx.compose.runtime.mutableStateOf(true) }
+    var lastUserScrollAt by remember {
+        androidx.compose.runtime.mutableLongStateOf(0L)
+    }
+    var lastSeenSize by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
+    // Detect user-driven scrolls (drag or fling). Programmatic
+    // animateScrollToItem below is NOT flagged because we only observe
+    // scroll positions while not animating our own follow.
+    LaunchedEffect(Unit) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (scrolling && !follow) {
+                    lastUserScrollAt = System.currentTimeMillis()
+                } else if (scrolling) {
+                    val atTail = listState.firstVisibleItemIndex >= lines.lastIndex - 1
+                    if (!atTail && lines.size == lastSeenSize) {
+                        follow = false
+                        lastUserScrollAt = System.currentTimeMillis()
+                    }
+                }
+            }
+    }
+
+    // Resume-follow watchdog: if the user has been idle for 10 s and the
+    // log is stable (no new lines since they left), spring back to tail.
+    LaunchedEffect(follow, lines.size) {
+        if (!follow) {
+            kotlinx.coroutines.delay(10_000)
+            val idleFor10s =
+                System.currentTimeMillis() - lastUserScrollAt >= 10_000
+            if (idleFor10s && lines.size == lastSeenSize) {
+                follow = true
+            }
         }
     }
+
+    // Springy tail-following: scroll by the estimated pixel distance to
+    // the newest line using a low-stiffness spring (LazyListState's
+    // animateScrollToItem snaps without an animation-spec parameter).
+    val followSpec: androidx.compose.animation.core.AnimationSpec<kotlin.Float> = spring(
+        dampingRatio = Spring.DampingRatioLowBouncy,
+        stiffness = Spring.StiffnessLow,
+    )
+    LaunchedEffect(lines.size, follow) {
+        lastSeenSize = lines.size
+        if (follow && lines.isNotEmpty()) {
+            val info = listState.layoutInfo
+            if (info.visibleItemsInfo.isEmpty()) {
+                listState.scrollToItem(lines.lastIndex)
+            } else {
+                val avg = info.visibleItemsInfo.map { it.size }
+                    .filter { it > 0 }.average().takeIf { !it.isNaN() } ?: 34.0
+                val delta = ((lines.lastIndex - listState.firstVisibleItemIndex + 1) * avg).toFloat()
+                if (delta > 0f) listState.animateScrollBy(delta, followSpec)
+            }
+        }
+    }
+
     LazyColumn(
         state = listState,
         modifier = Modifier

@@ -153,7 +153,7 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBootLocked() {
-        if (NativeProbe.isKernelSuActive()) {
+        if (RootStatusProbe.isActive()) {
             // Already rooted this boot (manual run or earlier retry): keep
             // the alarm retries harmless and report success immediately.
             AppPreferences.setBootRetryCount(this, 0)
@@ -401,7 +401,7 @@ class RootOnBootService : Service() {
             // apply actor died before recording completion). Accept it after
             // a grace period instead of reporting a false failure.
             if (System.currentTimeMillis() - started > KSU_ACTIVE_GRACE_MS &&
-                NativeProbe.isKernelSuActive()
+                RootStatusProbe.isActive()
             ) {
                 applied = true
                 break
