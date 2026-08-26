@@ -21,13 +21,15 @@ import org.json.JSONObject
  */
 object SpoofedManagerUpdater {
 
+    // Pull the OFFICIAL KernelSU manager so the crown's
+    // EXPECTED_HASH (c371...) matches — the pipeline's keystore never did.
     private const val FEED_URL =
-        "https://raw.githubusercontent.com/HyperRamzey/Root-My-Galaxy-Manager/main/feed.json"
+        "https://api.github.com/repos/tiann/KernelSU/releases/latest"
     private const val REGISTRY = "/data/adb/.rmg/ksumgr"
     private const val REMOTE_APK = "/data/local/tmp/.rmg-mgr.apk"
     private const val BACKUP_PREF = "spoofed_manager"
     private const val BACKUP_KEY = "registry"
-    private const val MAX_FEED_BYTES = 16 * 1024
+    private const val MAX_FEED_BYTES = 64 * 1024
     private const val MAX_APK_BYTES = 128 * 1024 * 1024
 
     private data class Feed(
@@ -96,15 +98,34 @@ object SpoofedManagerUpdater {
         }
 
         // Download through the app network, verify, install via root shell.
+        var feedEffective = feed
         val apk = download(feed.url) ?: return "download failed"
         try {
             if (apk.length() > MAX_APK_BYTES) return "download too large"
+            // Official feed has no versionCode — resolve it from the APK itself.
+            if (feedEffective.versionCode == 0 && context != null) {
+                val info = runCatching {
+                    context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+                }.getOrNull()
+                val vc = if (Build.VERSION.SDK_INT >= 28) {
+                    info?.longVersionCode?.toInt() ?: 0
+                } else {
+                    @Suppress("DEPRECATION") info?.versionCode ?: 0
+                }
+                if (vc > 0) feedEffective = feedEffective.copy(versionCode = vc)
+            }
+            // Re-check up-to-date now that we know the real versionCode (official case).
+            if (installed >= feedEffective.versionCode && pkg == feedEffective.pkg && feedEffective.versionCode != 0) {
+                return "up-to-date ($installed)"
+            }
             runCatching { adb.shell("su -c 'rm -f $REMOTE_APK'") }
             adb.push(apk, REMOTE_APK)
-            val remoteSha = adb.shell("su -c 'sha256sum $REMOTE_APK 2>/dev/null'").output
-                .trim().split(' ').firstOrNull() ?: ""
-            if (!remoteSha.equals(feed.sha256, ignoreCase = true)) {
-                return "sha mismatch"
+            if (feedEffective.sha256.isNotEmpty()) {
+                val remoteSha = adb.shell("su -c 'sha256sum $REMOTE_APK 2>/dev/null'").output
+                    .trim().split(' ').firstOrNull() ?: ""
+                if (!remoteSha.equals(feedEffective.sha256, ignoreCase = true)) {
+                    return "sha mismatch"
+                }
             }
             val install = adb.shell(
                 "su -c 'pm install -r $REMOTE_APK " +
@@ -119,13 +140,13 @@ object SpoofedManagerUpdater {
             }
             adb.shell(
                 "su -c 'mkdir -p /data/adb/.rmg; " +
-                    "echo \"${feed.versionCode} ${feed.pkg}\" > $REGISTRY'"
+                    "echo \"${feedEffective.versionCode} ${feedEffective.pkg}\" > $REGISTRY'"
             )
             context?.getSharedPreferences(BACKUP_PREF, Context.MODE_PRIVATE)
                 ?.edit()
-                ?.putString(BACKUP_KEY, "${feed.versionCode} ${feed.pkg}")
+                ?.putString(BACKUP_KEY, "${feedEffective.versionCode} ${feedEffective.pkg}")
                 ?.apply()
-            return "installed ${feed.versionName}(${feed.versionCode})"
+            return "installed ${feedEffective.versionName}(${feedEffective.versionCode})"
         } finally {
             apk.delete()
             runCatching { adb.shell("su -c 'rm -f $REMOTE_APK'") }
@@ -136,6 +157,31 @@ object SpoofedManagerUpdater {
         val text = httpGet(FEED_URL, maxBytes = MAX_FEED_BYTES)
             ?.toString(Charsets.UTF_8) ?: return null
         val json = JSONObject(text)
+        // Official tiann/KernelSU release has {tag_name, assets:[{name,browser_download_url}]}
+        // Fall back to our old feed.json shape (pkg/versionCode/url/sha256) if present.
+        if (json.has("assets")) {
+            val assets = json.optJSONArray("assets")
+            var apkUrl: String? = null
+            if (assets != null) {
+                for (i in 0 until assets.length()) {
+                    val a = assets.optJSONObject(i) ?: continue
+                    val name = a.optString("name")
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        apkUrl = a.optString("browser_download_url")
+                        if (name.contains("manager", ignoreCase = true)) break
+                    }
+                }
+            }
+            if (apkUrl.isNullOrEmpty()) return null
+            val tag = json.optString("tag_name", json.optString("name"))
+            return Feed(
+                pkg = "me.weishu.kernelsu",
+                versionCode = 0, // resolved after download via PackageManager
+                versionName = tag,
+                url = apkUrl,
+                sha256 = "",
+            )
+        }
         Feed(
             pkg = json.optString("pkg"),
             versionCode = json.optInt("versionCode"),
