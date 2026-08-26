@@ -1,5 +1,6 @@
 package dev.busung.s25uroot
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -311,6 +312,22 @@ class RootOnBootService : Service() {
             runCatching { adb.shell("rm -f '$remoteLog'") }
         }
 
+        // 5. Focus gate: never run the exploit while the app is in the
+        // background — a background kill mid-sequence has been observed to
+        // panic the kernel. Bring the app to the foreground first; if it
+        // cannot be foregrounded within the budget, abort cleanly and let
+        // the alarm retry. This is try #1 of 2 per user instruction.
+        if (!ensureAppForeground(adb)) {
+            LiveLog.add("• app not foregrounded — aborting exploit, retry later")
+            android.util.Log.w("RMG", "exploit aborted: app not in foreground")
+            // Release the session cleanly so the watchdog/finally can unwind.
+            runCatching { adb.close() }
+            // Schedule a quick retry in 90s (BootReceiver alarm) rather than
+            // busy-looping here; the watchdog will still fire if we hang.
+            BootReceiver.scheduleRetry(this, delayMs = 90_000)
+            return
+        }
+
         // 5. Run the exploit (one attempt per boot) in a streaming shell that
         // stays open for the full run — adbd kills a backgrounded process the
         // moment its shell stream closes, and the helper streams the live log
@@ -492,6 +509,37 @@ class RootOnBootService : Service() {
         } finally {
             runCatching { adb.close() }
         }
+    }
+
+    private fun ensureAppForeground(adb: WirelessAdbSession): Boolean {
+        // Try to bring MainActivity to the front. The foreground check uses
+        // two signals: ActivityManager importance + dumpsys resumed activity.
+        // Both are polled for a short budget before giving up.
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        repeat(3) { attempt ->
+            if (attempt == 0 && launchIntent != null) {
+                runCatching { startActivity(launchIntent) }
+                runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+                runCatching { adb.shell("wm dismiss-keyguard") }
+                Thread.sleep(2000)
+            } else {
+                runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+                Thread.sleep(1500)
+            }
+            // 1) ActivityManager check
+            val am = getSystemService(ActivityManager::class.java)
+            val procForeground = am?.runningAppProcesses?.firstOrNull { it.processName == packageName }?.let {
+                it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                    it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+            } == true
+            // 2) dumpsys resumed activity check (more reliable on One UI)
+            val dumpsys = runCatching { adb.shell("dumpsys activity activities | grep -m1 mResumedActivity").output }.getOrDefault("")
+            val dumpsysForeground = dumpsys.contains(packageName)
+            if (procForeground || dumpsysForeground) return true
+        }
+        return false
     }
 
     /**

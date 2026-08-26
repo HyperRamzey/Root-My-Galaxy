@@ -129,6 +129,29 @@ class BootReceiver : BroadcastReceiver() {
         private const val TAG = "BootReceiver"
         const val ACTION_RETRY = "dev.busung.s25uroot.action.AUTO_ROOT_RETRY"
         const val EXTRA_RETRY = "retry_index"
+
+        /** One-off retry after a focus-gate abort (try #1). Uses the same
+         * allowlist-granting alarm-clock path as the ladder. */
+        fun scheduleRetry(context: Context, delayMs: Long) {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, BootReceiver::class.java).apply {
+                action = ACTION_RETRY
+                putExtra(EXTRA_RETRY, 1)
+            }
+            val pending = PendingIntent.getBroadcast(
+                context, 9001, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val triggerAt = System.currentTimeMillis() + delayMs
+            runCatching {
+                val showIntent = PendingIntent.getActivity(
+                    context, 0,
+                    context.packageManager.getLaunchIntentForPackage(context.packageName),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                )
+                am.setAlarmClock(AlarmManager.AlarmClockInfo(triggerAt, showIntent), pending)
+            }
+        }
     /** Exact-match PI factory shared by scheduling and cancellation so a
      * successful run can defuse every pending rung (each alarm wake is a
      * battery cost once root is already live). */
