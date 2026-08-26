@@ -434,7 +434,7 @@ class RootOnBootService : Service() {
         // so the manager UI (module/WebUI host) exists while modules mount.
         // Identity is spoofed, so presence/version is resolved via root
         // shell (registry file + pm probes), never by package lookup alone.
-        runCatching { SpoofedManagerUpdater.ensureInstalled(adb) }
+        runCatching { SpoofedManagerUpdater.ensureInstalled(adb, this) }
             .onSuccess { report -> LiveLog.add("• spoofed manager: $report") }
             .onFailure { LiveLog.add("• spoofed manager skipped: ${it.message}") }
 

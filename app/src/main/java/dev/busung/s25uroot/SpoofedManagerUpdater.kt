@@ -1,5 +1,6 @@
 package dev.busung.s25uroot
 
+import android.content.Context
 import android.os.Build
 import java.io.File
 import java.net.HttpURLConnection
@@ -24,6 +25,8 @@ object SpoofedManagerUpdater {
         "https://raw.githubusercontent.com/HyperRamzey/Root-My-Galaxy-Manager/main/feed.json"
     private const val REGISTRY = "/data/adb/.rmg/ksumgr"
     private const val REMOTE_APK = "/data/local/tmp/.rmg-mgr.apk"
+    private const val BACKUP_PREF = "spoofed_manager"
+    private const val BACKUP_KEY = "registry"
     private const val MAX_FEED_BYTES = 16 * 1024
     private const val MAX_APK_BYTES = 128 * 1024 * 1024
 
@@ -40,12 +43,21 @@ object SpoofedManagerUpdater {
      * report for the run log; throws only on unexpected pipeline-level
      * failures (callers wrap this in runCatching anyway).
      */
-    fun ensureInstalled(adb: WirelessAdbSession): String {
+    fun ensureInstalled(adb: WirelessAdbSession, context: Context? = null): String {
         val feed = fetchFeed() ?: return "feed unavailable"
         if (feed.pkg.isEmpty() || feed.versionCode <= 0) return "feed malformed"
 
         // Detection via root shell: registry first, then a live pm probe.
+        // The registry is dual-recorded (root file + app-private prefs):
+        // if the root file is lost (module wipes, /data/adb resets), the
+        // backup still remembers the old spoofed id so rotation can
+        // uninstall it instead of orphaning a second manager.
         val registry = adb.shell("su -c 'cat $REGISTRY 2>/dev/null'").output.trim()
+            .ifEmpty {
+                context?.getSharedPreferences(BACKUP_PREF, Context.MODE_PRIVATE)
+                    ?.getString(BACKUP_KEY, null)
+            }
+            .orEmpty()
         var pkg = feed.pkg
         var installed = 0
         val regParts = registry.split(' ')
@@ -68,10 +80,13 @@ object SpoofedManagerUpdater {
         if (installed >= feed.versionCode) return "up-to-date ($installed)"
 
         // Spoof-id rotation: a registry package that differs from the
-        // feed's current id is an older-generation build — remove it so
-        // exactly one manager exists after the update.
+        // feed's current id is an older-generation build — remove it and
+        // VERIFY removal before installing the new one, otherwise a failed
+        // uninstall would leave two managers on the device.
         if (pkg != feed.pkg && pmPath.isNotEmpty()) {
             adb.shell("su -c 'pm uninstall $pkg'")
+            val gone = adb.shell("su -c 'pm path $pkg 2>/dev/null'").output.trim().isEmpty()
+            if (!gone) return "rotation blocked: old $pkg uninstall failed"
             installed = 0
         }
 
@@ -94,6 +109,10 @@ object SpoofedManagerUpdater {
                 "su -c 'mkdir -p /data/adb/.rmg; " +
                     "echo \"${feed.versionCode} ${feed.pkg}\" > $REGISTRY'"
             )
+            context?.getSharedPreferences(BACKUP_PREF, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putString(BACKUP_KEY, "${feed.versionCode} ${feed.pkg}")
+                ?.apply()
             return "installed ${feed.versionName}(${feed.versionCode})"
         } finally {
             apk.delete()
