@@ -345,14 +345,18 @@ class RootOnBootService : Service() {
             append("RMG_KSNITCH_AVERAGE=4 ")
             append("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID} ")
             append("SLIDE_SOURCE=tracefs ")
-            // Three in-boot attempts (2026-08-27 stability rework): the
-            // payload now pin-gates every attempt — it re-validates the
-            // choreography core pair against the CURRENT cpuset/restricted-
-            // core state and fails CLEANLY when no perf-core pair is legally
-            // pinnable, instead of running unpinned into the ~50% kernel
-            // panic. Samsung PM opens and closes perf-core windows mid-boot
-            // (thermal/interactive state), so extra gated attempts catch an
-            // open window without paying a full reboot per clean miss.
+            // Reboot-per-3-attempts policy (2026-08-27, per user): each boot
+            // gets 3 pin-gated attempts, then the ladder reboots for a fresh
+            // kernel/allocator state. The payload pin-gate re-validates the
+            // choreography core pair against the CURRENT restricted-core
+            // state and fails CLEANLY when no perf-core pair is legally
+            // pinnable (never runs unpinned into the old ~50% panic). Each
+            // attempt waits up to RMG_PIN_GATE_WAIT_SEC for a perf-core
+            // window — Samsung PM opens perf cores for the shell domain for
+            // ~2 min after boot, closes them for the mid-boot window, then
+            // settles into a light rotating restriction; fresh boots are
+            // fresh tickets at the early window.
+            append("RMG_PIN_GATE_WAIT_SEC=180 ")
             append("EXPLOIT_ATTEMPTS=3 ")
             append("P0_ATTEMPT_TIMEOUT_SEC=115 ")
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
@@ -646,7 +650,7 @@ class RootOnBootService : Service() {
         private const val CHANNEL_ID = "root_on_boot"
         private const val NOTIFICATION_ID = 0x524F42
         private const val MODULE_WAIT_MS = 300_000L
-        private const val MAX_BOOT_RETRIES = 3
+        private const val MAX_BOOT_RETRIES = 6
         private const val LEGACY_KSUD_NAME = "ksud-s25u-kdp"
         /** Wait this long for a fresh done-marker before trusting the
          * KernelSU-active probe as a success fallback. */
