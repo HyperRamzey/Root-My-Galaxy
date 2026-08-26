@@ -512,29 +512,25 @@ class RootOnBootService : Service() {
     }
 
     private fun ensureAppForeground(adb: WirelessAdbSession): Boolean {
-        // Try to bring MainActivity to the front. The foreground check uses
-        // two signals: ActivityManager importance + dumpsys resumed activity.
-        // Both are polled for a short budget before giving up.
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
+        // Background FGS is not allowed to start activities directly on Android
+        // 14+ (BAL blocked). Use the wireless ADB shell — it has no BAL
+        // restriction — to launch MainActivity and dismiss the keyguard.
         repeat(3) { attempt ->
-            if (attempt == 0 && launchIntent != null) {
-                runCatching { startActivity(launchIntent) }
+            if (attempt == 0) {
                 runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
                 runCatching { adb.shell("wm dismiss-keyguard") }
-                Thread.sleep(2000)
+                runCatching { adb.shell("am start -n dev.busung.s25uroot/.MainActivity --activity-clear-top") }
+                Thread.sleep(2500)
             } else {
                 runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
-                Thread.sleep(1500)
+                runCatching { adb.shell("am start -n dev.busung.s25uroot/.MainActivity") }
+                Thread.sleep(2000)
             }
-            // 1) ActivityManager check
             val am = getSystemService(ActivityManager::class.java)
             val procForeground = am?.runningAppProcesses?.firstOrNull { it.processName == packageName }?.let {
                 it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
                     it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
             } == true
-            // 2) dumpsys resumed activity check (more reliable on One UI)
             val dumpsys = runCatching { adb.shell("dumpsys activity activities | grep -m1 mResumedActivity").output }.getOrDefault("")
             val dumpsysForeground = dumpsys.contains(packageName)
             if (procForeground || dumpsysForeground) return true
