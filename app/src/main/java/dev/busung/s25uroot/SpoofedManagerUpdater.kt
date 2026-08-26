@@ -77,7 +77,12 @@ object SpoofedManagerUpdater {
             ).output
             installed = Regex("versionCode=(\\d+)").find(dump)?.groupValues?.get(1)?.toIntOrNull() ?: 0
         }
-        if (installed >= feed.versionCode) return "up-to-date ($installed)"
+        // Up-to-date requires BOTH the version and the current spoof id:
+        // per-run identities can reuse the upstream versionCode, and an
+        // id change must rotate even when the version matches.
+        if (installed >= feed.versionCode && pkg == feed.pkg) {
+            return "up-to-date ($installed)"
+        }
 
         // Spoof-id rotation: a registry package that differs from the
         // feed's current id is an older-generation build — remove it and
