@@ -337,14 +337,21 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 appendLog("[!] zygote kill: ${kill.output.trim()}")
             }
+            appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
             return
         }
 
         // Fallback: daemon apply-modules (only works while SELinux permissive)
         appendLog("[!] su not available, trying daemon apply-modules")
-        val apply = adb.shell("$REMOTE_HELPER_PATH --apply-modules")
+        val stagedHelper = runCatching {
+            adb.shell("test -x /data/local/tmp/cve-2026-43499-root && echo ok").output
+        }.getOrDefault("").contains("ok")
+        val helperCmd =
+            if (stagedHelper) "/data/local/tmp/cve-2026-43499-root" else REMOTE_HELPER_PATH
+        val apply = adb.shell("$helperCmd --apply-modules")
         if (apply.exitCode == 0 && apply.output.contains("zygote")) {
             appendLog(app.getString(R.string.log_modules_zygote_restarted))
+            appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
             return
         }
         appendLog("[-] ${app.getString(R.string.error_modules_restart, apply.output.trim().takeLast(120))}")

@@ -430,6 +430,14 @@ class RootOnBootService : Service() {
         val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
+        // 6.5 Spoofed KSU manager: install/update BEFORE module activation
+        // so the manager UI (module/WebUI host) exists while modules mount.
+        // Identity is spoofed, so presence/version is resolved via root
+        // shell (registry file + pm probes), never by package lookup alone.
+        runCatching { SpoofedManagerUpdater.ensureInstalled(adb) }
+            .onSuccess { report -> LiveLog.add("• spoofed manager: $report") }
+            .onFailure { LiveLog.add("• spoofed manager skipped: ${it.message}") }
+
         // 7. Module activation is OWNED by the native side (root-daemon
         // watcher + shell-context stability keeper). The app must not run
         // ksud stages or kill zygote itself: duplicating the native actors
@@ -469,6 +477,12 @@ class RootOnBootService : Service() {
         RootStatusProbe.storeBootReceipt(this)
         batteryWindDown(adb)
         check(applied) { "Module activation did not complete within ${MODULE_WAIT_MS / 1000}s" }
+
+        // 8. File-mark verification: files created by root contexts after
+        // the folder heal (daemon socket, ksud staging, markers, logs) can
+        // carry foreign SELinux labels that re-break shell access for the
+        // rest of this boot and the next run's staging.
+        LiveLog.add("• file marks: ${ExploitStaging.healFileMarks(adb)}")
         } finally {
             runCatching { adb.close() }
         }
