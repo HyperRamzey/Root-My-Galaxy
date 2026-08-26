@@ -447,18 +447,20 @@ class RootOnBootService : Service() {
         val lateLoad = adb.shell("$remoteHelper --late-load")
         check(lateLoad.exitCode == 0) { "KernelSU late-load failed: ${lateLoad.output}" }
 
-        // 6.5 Spoofed KSU manager: install/update BEFORE module activation
-        // so the manager UI (module/WebUI host) exists while modules mount.
-        // Identity is spoofed, so presence/version is resolved via root
-        // shell (registry file + pm probes), never by package lookup alone.
-        runCatching { SpoofedManagerUpdater.ensureInstalled(adb, this) }
+        // 6.5 Mainline KernelSU manager: install/update BEFORE module
+        // activation so the manager UI (module/WebUI host) exists while
+        // modules mount. The payload module is built with the upstream
+        // manager-signature pin, so the official me.weishu.kernelsu APK
+        // is what the kernel crowns; presence/version is resolved via
+        // root shell because KSU may hide the manager from the app domain.
+        runCatching { KsuManagerUpdater.ensureInstalled(adb, this) }
             .onSuccess { report ->
-                LiveLog.add("• spoofed manager: $report")
-                android.util.Log.w("RMG", "spoofed manager: $report")
+                LiveLog.add("• KernelSU manager: $report")
+                android.util.Log.w("RMG", "KernelSU manager: $report")
             }
             .onFailure {
-                LiveLog.add("• spoofed manager skipped: ${it.message}")
-                android.util.Log.w("RMG", "spoofed manager skipped", it)
+                LiveLog.add("• KernelSU manager skipped: ${it.message}")
+                android.util.Log.w("RMG", "KernelSU manager skipped", it)
             }
 
         // 7. Module activation is OWNED by the native side (root-daemon

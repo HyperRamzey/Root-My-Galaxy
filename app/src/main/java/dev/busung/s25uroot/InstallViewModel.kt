@@ -290,6 +290,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         storeInstallReceipt()
         appendLog(app.getString(R.string.log_ksu_control_verified))
 
+        // Install/update the mainline KernelSU manager so the kernel's
+        // manager-signature pin crowns it. Best-effort: a missing manager
+        // does not invalidate the root install itself.
+        runCatching { KsuManagerUpdater.ensureInstalled(adb, app) }
+            .onSuccess { appendLog("[+] $it") }
+            .onFailure { appendLog("[-] KernelSU manager skipped: ${it.message}") }
+
         // Ensure ADB key exists for root-on-boot pairing
         AdbKeyManager(app)
     }
