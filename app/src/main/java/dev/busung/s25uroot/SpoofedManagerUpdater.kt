@@ -58,10 +58,22 @@ object SpoofedManagerUpdater {
             installed = 0 // registry stale: package was uninstalled
         } else if (installed == 0) {
             // Present but unregistered (manual install): read its version.
-            val dump = adb.shell("su -c 'dumpsys package $pkg 2>/dev/null'").output
+            // grep runs on-device — a full dumpsys dump would blow the
+            // ADB response size limit.
+            val dump = adb.shell(
+                "su -c 'dumpsys package $pkg 2>/dev/null | grep -m1 versionCode'"
+            ).output
             installed = Regex("versionCode=(\\d+)").find(dump)?.groupValues?.get(1)?.toIntOrNull() ?: 0
         }
         if (installed >= feed.versionCode) return "up-to-date ($installed)"
+
+        // Spoof-id rotation: a registry package that differs from the
+        // feed's current id is an older-generation build — remove it so
+        // exactly one manager exists after the update.
+        if (pkg != feed.pkg && pmPath.isNotEmpty()) {
+            adb.shell("su -c 'pm uninstall $pkg'")
+            installed = 0
+        }
 
         // Download through the app network, verify, install via root shell.
         val apk = download(feed.url) ?: return "download failed"
@@ -132,6 +144,7 @@ object SpoofedManagerUpdater {
                 require(
                     next.startsWith("https://github.com/") ||
                         next.startsWith("https://objects.githubusercontent.com/") ||
+                        next.startsWith("https://release-assets.githubusercontent.com/") ||
                         next.startsWith("https://raw.githubusercontent.com/")
                 ) { "redirect to untrusted host" }
                 url = next

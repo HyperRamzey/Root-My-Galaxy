@@ -195,6 +195,6 @@ class PayloadRepository(private val context: Context) {
         private const val MANIFEST_PATH = "support/targets-v3.json"
         private const val MANIFEST_CACHE = "payloads/targets-cache.json"
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
-        private const val MAX_MANIFEST_BYTES = 256 * 1024
+        private const val MAX_MANIFEST_BYTES = 1024 * 1024
     }
 }
