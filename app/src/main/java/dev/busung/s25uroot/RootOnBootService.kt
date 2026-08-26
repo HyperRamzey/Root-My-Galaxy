@@ -435,8 +435,14 @@ class RootOnBootService : Service() {
         // Identity is spoofed, so presence/version is resolved via root
         // shell (registry file + pm probes), never by package lookup alone.
         runCatching { SpoofedManagerUpdater.ensureInstalled(adb, this) }
-            .onSuccess { report -> LiveLog.add("• spoofed manager: $report") }
-            .onFailure { LiveLog.add("• spoofed manager skipped: ${it.message}") }
+            .onSuccess { report ->
+                LiveLog.add("• spoofed manager: $report")
+                android.util.Log.w("RMG", "spoofed manager: $report")
+            }
+            .onFailure {
+                LiveLog.add("• spoofed manager skipped: ${it.message}")
+                android.util.Log.w("RMG", "spoofed manager skipped", it)
+            }
 
         // 7. Module activation is OWNED by the native side (root-daemon
         // watcher + shell-context stability keeper). The app must not run

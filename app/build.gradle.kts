@@ -33,7 +33,15 @@ android {
             // otherwise self-update (install -r) fails with
             // INSTALL_FAILED_UPDATE_INCOMPATIBLE because every CI runner
             // would otherwise mint a different ephemeral debug key.
-            storeFile = file("release.keystore")
+            //
+            // v2 keystore: deliberately DIFFERENT from the spoofed KSU
+            // manager's cert. The KernelSU kernel module crowns the first
+            // matching-signature APK it scans in /data/app as THE manager;
+            // with the app sharing the manager's cert the crown flipped
+            // per install layout. The app must never be crowned — its
+            // pipeline runs over adb-shell su and its status probe has a
+            // not-registered fallback — so the manager keeps the crown.
+            storeFile = file("release-v2.keystore")
             storePassword = "rmg-release-key"
             keyAlias = "rmg-release"
             keyPassword = "rmg-release-key"

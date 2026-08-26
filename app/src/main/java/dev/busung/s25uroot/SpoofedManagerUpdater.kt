@@ -106,9 +106,16 @@ object SpoofedManagerUpdater {
             if (!remoteSha.equals(feed.sha256, ignoreCase = true)) {
                 return "sha mismatch"
             }
-            val install = adb.shell("su -c 'pm install -r $REMOTE_APK'")
+            val install = adb.shell(
+                "su -c 'pm install -r $REMOTE_APK " +
+                    "> /data/local/tmp/.rmg-install.log 2>&1; exit \$?'"
+            )
+            val installLog = adb.shell(
+                "cat /data/local/tmp/.rmg-install.log 2>/dev/null"
+            ).output.trim()
             if (install.exitCode != 0) {
-                return "install failed: ${install.output.trim().takeLast(120)}"
+                return "install failed (exit ${install.exitCode}): " +
+                    installLog.takeLast(160).ifEmpty { install.output.trim().takeLast(120) }
             }
             adb.shell(
                 "su -c 'mkdir -p /data/adb/.rmg; " +
