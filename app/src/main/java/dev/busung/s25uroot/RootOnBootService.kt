@@ -512,20 +512,14 @@ class RootOnBootService : Service() {
     }
 
     private fun ensureAppForeground(adb: WirelessAdbSession): Boolean {
-        // Background FGS is not allowed to start activities directly on Android
-        // 14+ (BAL blocked). Use the wireless ADB shell — it has no BAL
-        // restriction — to launch MainActivity and dismiss the keyguard.
         repeat(3) { attempt ->
-            if (attempt == 0) {
-                runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
-                runCatching { adb.shell("wm dismiss-keyguard") }
-                runCatching { adb.shell("am start -n dev.busung.s25uroot/.MainActivity --activity-clear-top") }
-                Thread.sleep(2500)
-            } else {
-                runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
-                runCatching { adb.shell("am start -n dev.busung.s25uroot/.MainActivity") }
-                Thread.sleep(2000)
-            }
+            runCatching { adb.shell("input keyevent KEYCODE_WAKEUP") }
+            Thread.sleep(500)
+            runCatching { adb.shell("input swipe 500 2000 500 600 300") }
+            runCatching { adb.shell("wm dismiss-keyguard") }
+            Thread.sleep(800)
+            runCatching { adb.shell("am start -W -n dev.busung.s25uroot/.MainActivity --activity-clear-top") }
+            Thread.sleep(2500)
             val am = getSystemService(ActivityManager::class.java)
             val procForeground = am?.runningAppProcesses?.firstOrNull { it.processName == packageName }?.let {
                 it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
@@ -534,6 +528,7 @@ class RootOnBootService : Service() {
             val dumpsys = runCatching { adb.shell("dumpsys activity activities | grep -m1 mResumedActivity").output }.getOrDefault("")
             val dumpsysForeground = dumpsys.contains(packageName)
             if (procForeground || dumpsysForeground) return true
+            android.util.Log.w("RMG", "foreground check failed attempt ${attempt + 1}: proc=$procForeground dumpsys='$dumpsys'")
         }
         return false
     }
