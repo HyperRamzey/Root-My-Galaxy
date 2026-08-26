@@ -345,7 +345,15 @@ class RootOnBootService : Service() {
             append("RMG_KSNITCH_AVERAGE=4 ")
             append("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID} ")
             append("SLIDE_SOURCE=tracefs ")
-            append("EXPLOIT_ATTEMPTS=1 ")
+            // Three in-boot attempts (2026-08-27 stability rework): the
+            // payload now pin-gates every attempt — it re-validates the
+            // choreography core pair against the CURRENT cpuset/restricted-
+            // core state and fails CLEANLY when no perf-core pair is legally
+            // pinnable, instead of running unpinned into the ~50% kernel
+            // panic. Samsung PM opens and closes perf-core windows mid-boot
+            // (thermal/interactive state), so extra gated attempts catch an
+            // open window without paying a full reboot per clean miss.
+            append("EXPLOIT_ATTEMPTS=3 ")
             append("P0_ATTEMPT_TIMEOUT_SEC=115 ")
             append("EXPLOIT_ATTEMPT_TIMEOUT_SEC=600 ")
             append("$remoteHelper --run-payload $remoteExploit $remoteHelper $remoteLog")
@@ -406,10 +414,10 @@ class RootOnBootService : Service() {
             }
         }
         if (!exploitSucceeded) {
-            // One clean attempt per boot: a burned attempt cannot be repeated
-            // safely, so reboot for a fresh one - bounded by a consecutive
-            // retry budget so a persistently failing state cannot loop
-            // the device forever.
+            // All in-boot attempts burned (each one pin-gated: clean fails,
+            // no unpinned gambles). Reboot for a fresh kernel/allocator
+            // state - bounded by a consecutive retry budget so a
+            // persistently failing state cannot loop the device forever.
             val attempts = AppPreferences.bootRetryCount(this) + 1
             if (attempts <= MAX_BOOT_RETRIES) {
                 AppPreferences.setBootRetryCount(this, attempts)

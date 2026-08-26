@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -156,7 +157,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import dev.busung.s25uroot.ui.theme.RootMyGalaxyTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -202,6 +206,30 @@ class MainActivity : ComponentActivity() {
         setTurnScreenOn(true)
         setShowWhenLocked(false)
         window.isNavigationBarContrastEnforced = false
+        // Battery-saver-scoped screen hold: keep the display on ONLY while
+        // the boot pipeline is Running. The exploit choreography needs an
+        // interactive SoC (Samsung PM dynamically restricts perf cores
+        // when the device goes non-interactive — observed: cpu5/cpu7
+        // affinity EINVAL mid-attempt -> unpinned write stage -> kernel
+        // panic). The flag clears itself the moment the pipeline leaves
+        // Running (Done/Idle), so no lingering wake state after root +
+        // modules mounted; the service's finally path already restores
+        // STAY_ON_WHILE_PLUGGED_IN and releases its wakelock.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                RootOnBootProgress.state.collect { state ->
+                    if (state is RootOnBootState.Running) {
+                        window.addFlags(
+                            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                        )
+                    } else {
+                        window.clearFlags(
+                            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                        )
+                    }
+                }
+            }
+        }
         requestBatteryOptimizationExemption()
         requestNotificationPermissionIfNeeded()
         accentColor = AppPreferences.accentColor(this)
