@@ -183,6 +183,7 @@
     <string name="advanced_mode">Advanced mode</string>
     <string name="advanced_mode_description">Manually choose a device-compatible payload during installation</string>
     <string name="repo_profile_missing">Support profile %1$s is no longer available</string>
+    <string name="repo_feed_unreachable">GitHub feed unreachable after %1$d attempts — aborting instead of risking a stale payload</string>
     <string name="select_device_title">Choose a payload</string>
     <string name="select_device_description">Select a payload by device model and kernel version.</string>
     <string name="show_my_device_only">Show only my device</string>

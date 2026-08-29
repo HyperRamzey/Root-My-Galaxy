@@ -17,10 +17,44 @@ data class VerifiedPayloads(
 )
 
 class PayloadRepository(private val context: Context) {
+    /**
+     * Resolve against the live feed, retrying the full commit+manifest
+     * fetch up to [attempts] times. Every attempt failure is observable
+     * (logged via onRetry); after the last attempt this ABORTS — never a
+     * cached-manifest fallback. The cache once let a stale ksud ship with
+     * fresh exploit binaries (sizes validated against an outdated
+     * manifest), crashing the rebased KernelSU stack on device.
+     */
+    fun resolveTargetFresh(
+        snapshot: DeviceSnapshot,
+        attempts: Int = FEED_FETCH_ATTEMPTS,
+        onRetry: (attempt: Int, error: Throwable) -> Unit = { _, _ -> },
+    ): TargetProfile {
+        require(attempts > 0)
+        var last: Throwable? = null
+        repeat(attempts) { index ->
+            try {
+                val profile = loadTargets().firstOrNull { it.matches(snapshot) }
+                if (profile != null) return profile
+                error(context.getString(R.string.repo_no_profile))
+            } catch (e: Throwable) {
+                last = e
+                if (index < attempts - 1) {
+                    onRetry(index + 1, e)
+                    Thread.sleep(RETRY_BACKOFF_MS * (index + 1))
+                }
+            }
+        }
+        throw IllegalStateException(
+            context.getString(R.string.repo_feed_unreachable, attempts),
+            last,
+        )
+    }
+
     fun loadTargets(): List<TargetProfile> {
         val commit = resolveMainCommit()
         val manifestBytes = downloadBytes(rawUrl(commit, "support/targets-v3.json"), MAX_MANIFEST_BYTES)
-        // Persist for offline fallback (see resolveTarget(allowCached)).
+        // Persist for diagnostics cache (see lastCachedTargets()).
         runCatching { File(context.filesDir, MANIFEST_CACHE).writeBytes(manifestBytes) }
         return SupportManifest.parse(manifestBytes).targets.map { profile -> profile.copy(
             exploit = profile.exploit.copy(url = pinArtifactUrl(profile.exploit.url, commit)),
@@ -29,39 +63,17 @@ class PayloadRepository(private val context: Context) {
         ) }
     }
 
-    fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = resolveTarget(snapshot, allowCached = false)
+    fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = resolveTargetFresh(snapshot)
 
     /**
-     * Resolves the target profile against the live feed, falling back to the
-     * last successfully downloaded manifest when the network is unavailable
-     * (GitHub API intermittently returns 504 in the first minutes after
-     * boot). Without this, a transient API outage would abort root-on-boot
-     * even though a valid payload cache exists locally.
+     * Last successfully downloaded manifest, for diagnostics only. Never
+     * gates staging sizes: a stale cached manifest once validated a stale
+     * ksud while the exploit binaries looked fresh, crashing the rebased
+     * KernelSU stack (SIGILL + driver/manager mismatch) on device.
      */
-    fun resolveTarget(snapshot: DeviceSnapshot, allowCached: Boolean): TargetProfile {
-        try {
-            val profile = loadTargets().firstOrNull { it.matches(snapshot) }
-            if (profile != null) {
-                // loadTargets() already persisted the manifest bytes for
-                // offline fallback — a second download here doubled the
-                // serial network cost of every boot for zero information.
-                return profile
-            }
-        } catch (e: Exception) {
-            if (!allowCached) throw e
-            val cached = loadTargetsFromCache()?.firstOrNull { it.matches(snapshot) }
-            if (cached != null) return cached
-            throw e
-        }
-        error(context.getString(R.string.repo_no_profile))
-    }
-
-    private fun loadTargetsFromCache(): List<TargetProfile>? = runCatching {
+    fun lastCachedTargets(): List<TargetProfile>? = runCatching {
         val file = File(context.filesDir, MANIFEST_CACHE)
         if (!file.exists()) return null
-        // Offline fallback: serve the last good manifest as-is. The boot
-        // path only needs sizes + file names from it; any refresh download
-        // will re-pin to a live commit once the network is back.
         SupportManifest.parse(file.readBytes()).targets
     }.getOrNull()
 
@@ -196,5 +208,8 @@ class PayloadRepository(private val context: Context) {
         private const val MANIFEST_CACHE = "payloads/targets-cache.json"
         private const val MAX_COMMIT_RESPONSE_BYTES = 16 * 1024
         private const val MAX_MANIFEST_BYTES = 1024 * 1024
+        /** Live-feed fetch attempts before aborting (no cache fallback). */
+        private const val FEED_FETCH_ATTEMPTS = 3
+        private const val RETRY_BACKOFF_MS = 3_000L
     }
 }

@@ -245,9 +245,14 @@ class RootOnBootService : Service() {
         // 4. Resolve target and stage payloads
         running(getString(R.string.boot_stage_staging))
         val repository = PayloadRepository(this)
-        // Cached fallback keeps the pipeline alive when GitHub times out
-        // right after boot (observed HTTP 504 from api.github.com).
-        val profile = repository.resolveTarget(DeviceSnapshot.current(), allowCached = true)
+        // Fresh-feed resolution with bounded retries; on persistent failure
+        // ABORT this run — the alarm ladder re-tries later. A cached
+        // manifest must never gate staging sizes: that path shipped a
+        // stale v1.2.12 ksud alongside fresh exploit binaries and crashed
+        // the rebased KernelSU stack (SIGILL, driver/manager mismatch).
+        val profile = repository.resolveTargetFresh(DeviceSnapshot.current()) { attempt, e ->
+            running(getString(R.string.boot_stage_staging), "feed attempt $attempt failed: ${e.message}")
+        }
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
         val exploit = File(payloadDir, "cve-2026-43499-app.so")
         val rootHelper = File(payloadDir, "cve-2026-43499-root")
@@ -258,29 +263,26 @@ class RootOnBootService : Service() {
             LEGACY_KSUD_NAME,
         ).map { File(payloadDir, it) }
 
-        // Refresh-on-boot: resolveTarget() already fetched the live manifest,
-        // so compare the cached artifacts against its expected sizes. A
-        // mismatch means a payload was updated upstream since the last run -
-        // re-download before staging so every boot executes the current
-        // build instead of whatever the cache happens to hold.
+        // Refresh-on-boot against the LIVE manifest sizes. A mismatch means
+        // a payload was updated upstream since the last run — re-download.
+        // On download failure ABORT (never stage mismatched/stale files):
+        // the alarm ladder retries, and a half-fresh stack must never ship.
         fun cacheComplete(): Boolean =
             exploit.exists() && exploit.length() == profile.exploit.size &&
                 rootHelper.exists() && profile.rootHelper?.let { rootHelper.length() == it.size } == true &&
                 ksudCandidates().any { it.exists() && it.length() == profile.kernelSu.size }
         if (!cacheComplete()) {
             running(getString(R.string.boot_stage_staging), "refreshing payloads from feed")
-            val refreshed = runCatching { repository.download(profile) {} }
-            if (refreshed.isFailure && !exploit.exists()) {
-                check(false) {
-                    "Payload refresh failed and no cache exists for ${profile.profileId}: " +
-                        refreshed.exceptionOrNull()?.message
-                }
-            }
+            repository.download(profile) {}
         }
-        val ksud = ksudCandidates().firstOrNull { it.exists() }
-            ?: File(payloadDir, profile.kernelSu.url.substringAfterLast('/'))
-        check(exploit.exists() && rootHelper.exists() && ksud.exists()) {
-            "Cached payloads missing for ${profile.profileId} — run the exploit once from the app first"
+        val ksud = ksudCandidates().firstOrNull { it.exists() && it.length() == profile.kernelSu.size }
+        check(exploit.exists() && exploit.length() == profile.exploit.size &&
+            rootHelper.exists() && profile.rootHelper?.let { rootHelper.length() == it.size } == true) {
+            "Payload download failed for ${profile.profileId} — refusing to stage incomplete artifacts"
+        }
+        check(ksud != null) {
+            "ksud size ${profile.kernelSu.size} not present after feed download — " +
+                "refusing to stage a stale ksud for ${profile.profileId}"
         }
 
         // Work-dir staging resolution. Anti-log addons (KillLogger-class)
