@@ -151,6 +151,7 @@
     <string name="adb_pair_unknown_error">Unknown error</string>
     <string name="adb_pair_status_paired">Paired</string>
     <string name="adb_pair_status_not_paired">Not paired</string>
+    <string name="error_adb_pairing_lost">Wireless ADB pairing was revoked by the device — re-pair required (Settings → Wireless ADB pairing). Auto re-apply resumes after pairing.</string>
     <string name="boot_notification_channel">Root on boot</string>
     <string name="boot_notification_running">Re-applying root…</string>
     <string name="boot_notification_success">Root + KernelSU applied successfully</string>

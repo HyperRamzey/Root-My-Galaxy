@@ -38,6 +38,7 @@ object AppPreferences {
     private const val AUTO_APPLY_MODULES = "auto_apply_modules"
     private const val AUTO_ROOT_BOOT = "auto_root_boot"
     private const val ADB_PAIRED = "adb_paired"
+    private const val BOOT_RUN_FAILED = "boot_run_failed_token"
     private const val BOOT_RETRY_COUNT = "boot_retry_count"
 
     fun accentColor(context: Context): AccentColor = AccentColor.fromStoredValue(
@@ -94,6 +95,28 @@ object AppPreferences {
         prefs(context).edit()
             .putBoolean(ADB_PAIRED, paired)
             .apply()
+    }
+
+    /** Boot-scoped marker: the root-on-boot pipeline ran and FAILED on this
+     * boot (adbPaired loss, feed failure, exploit failure, …). The status
+     * refresh uses it to suppress the misleading “Root is active…” banner
+     * until the next boot or a successful manual Install. */
+    fun bootRunFailed(context: Context): Boolean {
+        val bootToken = runCatching {
+            java.io.File("/proc/sys/kernel/random/boot_id")
+                .readText(java.nio.charset.StandardCharsets.US_ASCII).trim()
+        }.getOrNull() ?: return false
+        return prefs(context).getString(BOOT_RUN_FAILED, null) == bootToken
+    }
+
+    fun setBootRunFailed(context: Context, failed: Boolean) {
+        val bootToken = runCatching {
+            java.io.File("/proc/sys/kernel/random/boot_id")
+                .readText(java.nio.charset.StandardCharsets.US_ASCII).trim()
+        }.getOrNull() ?: return
+        prefs(context).edit().apply {
+            if (failed) putString(BOOT_RUN_FAILED, bootToken) else remove(BOOT_RUN_FAILED)
+        }.apply()
     }
 
     /** Consecutive failed auto-root boots that ended in a retry reboot. */

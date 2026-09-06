@@ -65,6 +65,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         refresh()
     }
 
+    /** True when any evidence exists that this device has been rooted
+     * before: a verified install/boot receipt or a succeeded history entry.
+     * Receipts persist across history clears, so a cleared history alone
+     * does not downgrade a previously-rooted device. */
+    private fun wasEverRooted(): Boolean {
+        val receipt = app.getSharedPreferences(INSTALL_RECEIPT, Application.MODE_PRIVATE)
+        if (receipt.getBoolean(RECEIPT_VERIFIED, false)) return true
+        return mutableHistory.value.any { it.result == InstallRunResult.Succeeded }
+    }
+
     fun refresh() {
         if (installJob?.isActive == true) return
         mutableHistory.value = historyStore.load()
@@ -80,7 +90,45 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 )
                 return@launch
             }
-            if (RootStatusProbe.isManagerUnregistered()) {
+            // "Root active, manager unregistered" requires evidence root is
+            // really live: either su answered and denied us (sucompat only
+            // answers when KernelSU is loaded) or the device was rooted
+            // before (receipt/history). A bare missing-su on a never-rooted
+            // device must fall through to the honest "Not installed" state —
+            // that is exactly the lie this guard removes.
+            val managerUnregistered = RootStatusProbe.isManagerUnregistered() &&
+                (SuProbe.lastFailure == SuProbe.Failure.DENIED || wasEverRooted())
+            if (managerUnregistered) {
+                // Pairing revoked: the boot pipeline cannot run at all, so
+                // root is NOT live this boot (reboots cleared it) — on every
+                // boot after the revocation, not just the first. Point the
+                // user at re-pairing instead of claiming root is active.
+                if (!AppPreferences.adbPaired(app)) {
+                    mutableState.value = InstallUiState(
+                        phase = InstallPhase.Ready,
+                        message = app.getString(R.string.error_adb_pairing_lost),
+                        probeOutput = probe,
+                        log = "$probe\n[-] ${app.getString(R.string.error_adb_pairing_lost)}",
+                    )
+                    return@launch
+                }
+                if (AppPreferences.bootRunFailed(app)) {
+                    // This boot's pipeline already failed: su is absent
+                    // because root is NOT live, not because manager
+                    // registration was skipped. Show the honest state.
+                    val profile = try {
+                        repository.resolveTarget(DeviceSnapshot.current())
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    mutableState.value = InstallUiState(
+                        phase = InstallPhase.Ready,
+                        message = app.getString(R.string.status_not_installed),
+                        probeOutput = probe,
+                        log = "$probe\n${profile?.let { app.getString(R.string.log_profile, it.profileId) } ?: ""}".trim(),
+                    )
+                    return@launch
+                }
                 // Root is live but this boot's exploit bypassed manager
                 // registration (e.g. manual launcher). Say so instead of
                 // the misleading "Not installed".
@@ -181,13 +229,17 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 // First-install guidance: module activation needs shell root grant.
                 appendLog(app.getString(R.string.first_install_shell_root_hint))
                 finishHistory(InstallRunResult.Succeeded)
+                // Root is now verifiably live this boot: clear the failed-run
+                // marker so the status banner shows the honest state.
+                AppPreferences.setBootRunFailed(app, false)
                 if (AppPreferences.autoApplyModules(app)) {
                     applyModulesViaAdb(adb)
                 }
                 adb.close()
             } catch (error: Throwable) {
-                appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
+                appendLog("[-] ${describeFailure(error)}")
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
+                if (isPairingLost(error)) AppPreferences.setAdbPaired(app, false)
                 finishHistory(InstallRunResult.Failed)
             }
         }
@@ -314,7 +366,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 applyModulesViaAdb(adb)
                 adb.close()
             } catch (error: Throwable) {
-                appendLog("[-] ${error.message ?: error.javaClass.simpleName}")
+                appendLog("[-] ${describeFailure(error)}")
+                if (isPairingLost(error)) AppPreferences.setAdbPaired(app, false)
             }
         }
     }
@@ -379,7 +432,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 appendLog("[+] soft-reboot triggered")
                 adb.close()
             } catch (error: Throwable) {
-                appendLog("[-] soft-reboot failed: ${error.message ?: error.javaClass.simpleName}")
+                appendLog("[-] soft-reboot failed: ${describeFailure(error)}")
+                if (isPairingLost(error)) AppPreferences.setAdbPaired(app, false)
             }
         }
     }
@@ -391,6 +445,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         return receipt.getString(RECEIPT_BOOT_TOKEN, null) == bootToken &&
             receipt.getBoolean(RECEIPT_VERIFIED, false)
     }
+
+    /** True when the failure is adbd rejecting our client cert — the
+     * pairing was revoked/wiped device-side and must be redone. */
+    private fun isPairingLost(error: Throwable): Boolean =
+        LocalAdbClient.isPairingLostError(error) ||
+            error.message?.contains(LocalAdbClient.PAIRING_LOST_MARKER) == true
+
+    /** User-facing failure text: pairing revocation is translated to a
+     * re-pair instruction; everything else keeps the raw message. */
+    private fun describeFailure(error: Throwable): String =
+        if (isPairingLost(error)) app.getString(R.string.error_adb_pairing_lost)
+        else error.message ?: error.javaClass.simpleName
 
     private fun storeInstallReceipt() {
         val bootToken = currentBootToken() ?: error(app.getString(R.string.error_boot_id))

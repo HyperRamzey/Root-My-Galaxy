@@ -57,19 +57,37 @@ class RootOnBootService : Service() {
         LiveLog.clear()
         scope.launch {
             val result = runCatching { runRootOnBoot() }
+            // Pairing-revocation is the one failure the pipeline can
+            // self-heal from state-side: clear the flag and translate the
+            // raw TLS alert into an actionable "re-pair" message so the
+            // user never sees ssl=… noise on the lockscreen card.
+            val pairingLost = !result.isSuccess && result.exceptionOrNull()
+                ?.let { LocalAdbClient.isPairingLostError(it) ||
+                    (it.message?.contains(LocalAdbClient.PAIRING_LOST_MARKER) == true) } == true
             val message = result.fold(
                 onSuccess = { getString(R.string.boot_notification_success) },
-                onFailure = {
-                    getString(R.string.boot_notification_failed, it.message ?: it.javaClass.simpleName)
+                onFailure = { failure ->
+                    if (pairingLost) {
+                        getString(R.string.error_adb_pairing_lost)
+                    } else {
+                        getString(
+                            R.string.boot_notification_failed,
+                            failure.message ?: failure.javaClass.simpleName,
+                        )
+                    }
                 },
             )
-            if (!result.isSuccess && message.contains(LocalAdbClient.PAIRING_LOST_MARKER)) {
+            if (pairingLost) {
                 // adbd rejected our key: pairing no longer valid. Clear the
                 // flag so the boot gate stops silently skipping and surfaces
                 // a re-pair prompt instead.
                 AppPreferences.setAdbPaired(this@RootOnBootService, false)
                 android.util.Log.w("RootOnBootService", "pairing lost; adbPaired cleared for re-pair")
             }
+            // Boot-scoped outcome for the status refresh: a failed run
+            // means su is absent because root is NOT live — the Home banner
+            // must not claim "Root is active" for the rest of this boot.
+            AppPreferences.setBootRunFailed(this@RootOnBootService, !result.isSuccess)
             try {
                 RootOnBootProgress.update(RootOnBootState.Done(result.isSuccess, message))
                 notifyResult(result.isSuccess, message)

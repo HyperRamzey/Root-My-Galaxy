@@ -15,7 +15,7 @@ import java.nio.ByteOrder
 import java.security.Signature
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLException
 import javax.net.ssl.SSLSocket
 
 private const val TAG = "LocalAdbClient"
@@ -84,18 +84,33 @@ class LocalAdbClient(
             tlsSocket = sslContext.socketFactory.createSocket(socket, host, port, true) as SSLSocket
             try {
                 tlsSocket.startHandshake()
-            } catch (t: SSLHandshakeException) {
+                Log.d(TAG, "TLS handshake succeeded")
+                // TLS 1.3: adbd's verdict on our client certificate arrives
+                // AFTER the handshake returns, on the first application-data
+                // read. Conscrypt surfaces the alert as a plain
+                // SSLException("Read error: ssl=…") — NOT SSLHandshakeException
+                // — so the post-TLS CNXN read below doubles as the early
+                // read that surfaces the rejection alert; classify it too.
+                tlsInput = DataInputStream(tlsSocket.inputStream)
+                tlsOutput = DataOutputStream(tlsSocket.outputStream)
+                useTls = true
+                runCatching { socket.soTimeout = 10_000 }
+                runCatching { tlsSocket.soTimeout = 10_000 }
+                try {
+                    message = read()
+                } catch (e: Throwable) {
+                    if (isPairingLostError(e)) throw pairingLostException(e)
+                    throw e
+                }
+            } catch (t: SSLException) {
                 // adbd rejected our client certificate: the pairing was
                 // revoked device-side or the key store was wiped. Surface a
                 // classifiable failure instead of an opaque SSL error so the
-                // boot pipeline can flag pairing as lost.
-                throw IOException("$PAIRING_LOST_MARKER: ${t.message}", t)
+                // boot pipeline can flag pairing as lost. Any other SSL
+                // failure (protocol/downgrade) rethrows untouched.
+                if (isPairingLostError(t)) throw pairingLostException(t)
+                throw t
             }
-            Log.d(TAG, "TLS handshake succeeded")
-            tlsInput = DataInputStream(tlsSocket.inputStream)
-            tlsOutput = DataOutputStream(tlsSocket.outputStream)
-            useTls = true
-            message = read()
         } else if (message.command == A_AUTH && message.arg0 == ADB_AUTH_TOKEN) {
             // Legacy RSA auth
             val sig = signToken(message.data!!)
@@ -581,6 +596,35 @@ class LocalAdbClient(
          * client certificate — i.e. pairing was revoked or wiped and the
          * user must re-pair. */
         const val PAIRING_LOST_MARKER = "ADB_PAIRING_LOST"
+
+        /** Cert-unknown is what adbd sends when our key is not in its
+         * keystore — every other TLS failure (network reset, protocol
+         * downgrade, self-signed chain) is transient or environmental,
+         * never a pairing-loss verdict. */
+        private val CERT_UNKNOWN = Regex(
+            "SSLV3_ALERT_CERTIFICATE_UNKNOWN|certificate_unknown|certificate unknown",
+            RegexOption.IGNORE_CASE,
+        )
+
+        /** True when [t] (or its cause chain) is adbd rejecting our client
+         * certificate — TLS 1.3 delivery of the alert lands as a plain
+         * Conscrypt SSLException("Read error: ssl=…") on the first read,
+         * or as SSLHandshakeException during the handshake on older
+         * stacks. Both shapes mean: pairing revoked, re-pair required. */
+        fun isPairingLostError(t: Throwable): Boolean {
+            var cause: Throwable? = t
+            var depth = 0
+            while (cause != null && depth++ < 8) {
+                if (cause is SSLException && CERT_UNKNOWN.containsMatchIn(cause.message ?: "")) {
+                    return true
+                }
+                cause = cause.cause
+            }
+            return false
+        }
+
+        private fun pairingLostException(t: Throwable): IOException =
+            IOException("$PAIRING_LOST_MARKER: ${t.message}", t)
 
         /**
          * Convenience: connect, run a shell command, close.
