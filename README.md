@@ -14,7 +14,7 @@ payloads, and KernelSU build artifacts: those live in
 which also serves the live feed this app consumes.
 
 [Latest release](https://github.com/HyperRamzey/Root-My-Galaxy/releases)
-(current: **v0.2.28**)
+(current: **v0.2.30**)
 
 Use only on devices you own or are explicitly authorized to test.
 
