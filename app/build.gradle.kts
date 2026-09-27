@@ -38,9 +38,15 @@ android {
             // manager's cert. The KernelSU kernel module crowns the first
             // matching-signature APK it scans in /data/app as THE manager;
             // with the app sharing the manager's cert the crown flipped
-            // per install layout. The app must never be crowned — its
+            // per install layout. The app must never be crowned - its
             // pipeline runs over adb-shell su and its status probe has a
-            // not-registered fallback — so the manager keeps the crown.
+            // not-registered fallback - so the manager keeps the crown.
+            //
+            // The pre-v2 `release.keystore` (the spoofed-era key) was
+            // deleted 2026-09-27: nothing referenced it after the
+            // spoofed-manager machinery was dropped in 10afa0b. It remains
+            // in history, so rotating this key is still possible if ever
+            // needed.
             storeFile = file("release-v2.keystore")
             storePassword = "rmg-release-key"
             keyAlias = "rmg-release"
