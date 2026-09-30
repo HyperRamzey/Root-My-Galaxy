@@ -154,4 +154,7 @@
         <item quantity="other">Estas execuções e seus logs serão removidos permanentemente.</item>
     </plurals>
     <string name="history_delete">Excluir</string>
+    <string name="firmware_mismatch_title">Incompatibilidade de firmware</string>
+    <string name="firmware_mismatch_body">Este celular usa o firmware %1$s, mas o payload selecionado foi feito para %2$s. Essa combinação é conhecida por falhar — escolha o payload correspondente a este firmware.</string>
+    <string name="repo_profile_incompatible">O perfil de suporte %1$s não é compatível com este aparelho (modelo, kernel ou firmware)</string>
 </resources>

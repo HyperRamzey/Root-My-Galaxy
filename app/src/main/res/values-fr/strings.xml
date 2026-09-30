@@ -155,4 +155,7 @@
         <item quantity="other">Ces exécutions et leurs journaux seront définitivement supprimés.</item>
     </plurals>
     <string name="history_delete">Supprimer</string>
+    <string name="firmware_mismatch_title">Incompatibilité de firmware</string>
+    <string name="firmware_mismatch_body">Ce téléphone utilise le firmware %1$s, mais la charge utile sélectionnée est conçue pour %2$s. Cette combinaison est connue pour échouer — choisissez la charge utile correspondant à ce firmware.</string>
+    <string name="repo_profile_incompatible">Le profil de support %1$s n\'est pas compatible avec cet appareil (modèle, noyau ou firmware)</string>
 </resources>

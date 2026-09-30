@@ -160,4 +160,7 @@
         <item quantity="other">Bu jarayonlar va ularning jurnallari butunlay o\'chiriladi.</item>
     </plurals>
     <string name="history_delete">O\'chirish</string>
+    <string name="firmware_mismatch_title">Dastur versiyasi mos kelmasligi</string>
+    <string name="firmware_mismatch_body">Bu telefon %1$s dastur versiyasini ishlatmoqda, lekin tanlangan payload %2$s uchun tayyorlangan. Bu birikma ishlamasligi maʼlum — ushbu versiyaga mos payloadni tanlang.</string>
+    <string name="repo_profile_incompatible">Qoʻllab-quvvatlash profili %1$s ushbu qurilma bilan mos emas (model, yadro yoki dastur versiyasi)</string>
 </resources>

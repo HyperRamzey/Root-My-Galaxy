@@ -15,7 +15,13 @@ class PayloadRepositoryTest {
         val repository = PayloadRepository(context)
         val snapshot = DeviceSnapshot.current()
         val profile = repository.resolveTarget(snapshot)
-        assertTrue(profile.matches(snapshot))
+        // Gate on the same feed-resolved firmware the resolver used. A firmware
+        // no feed entry claims resolves to "no opinion", whereas the strict
+        // per-profile read would reject it and make this assertion report a
+        // mismatch for a profile the resolver legitimately returned.
+        val firmware = repository.lastCachedTargets()
+            ?.let { targets -> PayloadRepository.effectiveFirmware(targets, snapshot) }
+        assertTrue(profile.matches(snapshot, firmware))
 
         val payloads = repository.download(profile) { }
         assertEquals(profile.exploit.size, payloads.exploit.length())

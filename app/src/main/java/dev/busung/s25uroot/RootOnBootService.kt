@@ -268,7 +268,8 @@ class RootOnBootService : Service() {
         // manifest must never gate staging sizes: that path shipped a
         // stale v1.2.12 ksud alongside fresh exploit binaries and crashed
         // the rebased KernelSU stack (SIGILL, driver/manager mismatch).
-        val profile = repository.resolveTargetFresh(DeviceSnapshot.current()) { attempt, e ->
+        val snapshot = DeviceSnapshot.current()
+        val profile = repository.resolveTargetFresh(snapshot) { attempt, e ->
             running(getString(R.string.boot_stage_staging), "feed attempt $attempt failed: ${e.message}")
         }
         val payloadDir = File(filesDir, "payloads/${profile.profileId}")
@@ -364,6 +365,15 @@ class RootOnBootService : Service() {
             append("RMG_KSNITCH_REPEAT=64 ")
             append("RMG_KSNITCH_AVERAGE=4 ")
             append("RMG_MANAGER_PACKAGE=${BuildConfig.APPLICATION_ID} ")
+            // Resolved firmware suffix, so the helper's log records which
+            // firmware this run's offsets were selected for. Empty string when
+            // the fingerprint is unusable; the currently shipped helper
+            // ignores RMG_FIRMWARE entirely, so this is forward-compatible and
+            // needs no payload-side change. Deliberately NOT passed as an
+            // argv flag: su_daemon.c dispatches --run-payload positionally on
+            // argv[1..4] and has no getopt, so a flag would be a silent no-op
+            // until the payload repo adds a consumer.
+            append("RMG_FIRMWARE=${snapshot.firmware.orEmpty()} ")
             append("SLIDE_SOURCE=tracefs ")
             // Reboot-per-3-attempts policy (2026-08-27, per user): each boot
             // gets 3 pin-gated attempts, then the ladder reboots for a fresh

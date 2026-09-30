@@ -149,4 +149,7 @@
         <item quantity="other">Các lần chạy này và nhật ký của chúng sẽ bị xóa vĩnh viễn.</item>
     </plurals>
     <string name="history_delete">Xóa</string>
+    <string name="firmware_mismatch_title">Không khớp phiên bản phần mềm</string>
+    <string name="firmware_mismatch_body">Điện thoại này chạy phiên bản %1$s, nhưng payload đã chọn được tạo cho %2$s. Tổ hợp này đã được biết là lỗi — hãy chọn payload đúng với phiên bản này.</string>
+    <string name="repo_profile_incompatible">Hồ sơ hỗ trợ %1$s không tương thích với thiết bị này (model, kernel hoặc phiên bản)</string>
 </resources>

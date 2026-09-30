@@ -57,4 +57,7 @@
         <item quantity="other">这些运行记录及其日志将被永久删除。</item>
     </plurals>
     <string name="history_delete">删除</string>
+    <string name="firmware_mismatch_title">固件不匹配</string>
+    <string name="firmware_mismatch_body">本机固件为 %1$s，但所选 payload 是为 %2$s 构建的。该组合已知会失败——请选择与本机固件匹配的 payload。</string>
+    <string name="repo_profile_incompatible">支持配置 %1$s 与本设备不兼容（型号、内核或固件）</string>
 </resources>

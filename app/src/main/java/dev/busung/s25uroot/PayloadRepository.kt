@@ -34,7 +34,7 @@ class PayloadRepository(private val context: Context) {
         var last: Throwable? = null
         repeat(attempts) { index ->
             try {
-                val profile = loadTargets().firstOrNull { it.matches(snapshot) }
+                val profile = selectTarget(loadTargets(), snapshot)
                 if (profile != null) return profile
                 error(context.getString(R.string.repo_no_profile))
             } catch (e: Throwable) {
@@ -51,6 +51,13 @@ class PayloadRepository(private val context: Context) {
         )
     }
 
+    /**
+     * Firmware-aware auto-selection, shared by the install flow and the boot
+     * path so both resolve identically. See the companion overload.
+     */
+    fun selectTarget(targets: List<TargetProfile>, snapshot: DeviceSnapshot): TargetProfile? =
+        selectTargetFor(targets, snapshot)
+
     fun loadTargets(): List<TargetProfile> {
         val commit = resolveMainCommit()
         val manifestBytes = downloadBytes(rawUrl(commit, "support/targets-v3.json"), MAX_MANIFEST_BYTES)
@@ -66,6 +73,23 @@ class PayloadRepository(private val context: Context) {
     fun resolveTarget(snapshot: DeviceSnapshot): TargetProfile = resolveTargetFresh(snapshot)
 
     /**
+     * Explicit picker entry point. A payloadId is a catalogue label, not
+     * authorisation: the target sheet lets the user turn off "show only my
+     * device", so a row naming the wrong-firmware payload can be submitted.
+     * Re-run the full gate here rather than trusting the id, or a GZE5
+     * payload gets staged onto a GZH2 device (and vice versa) by hand.
+     */
+    fun resolveTarget(snapshot: DeviceSnapshot, profileId: String): TargetProfile {
+        val targets = loadTargets()
+        val profile = targets.firstOrNull { it.profileId == profileId }
+            ?: error(context.getString(R.string.repo_profile_missing, profileId))
+        require(profile.matches(snapshot, effectiveFirmware(targets, snapshot))) {
+            context.getString(R.string.repo_profile_incompatible, profileId)
+        }
+        return profile
+    }
+
+    /**
      * Last successfully downloaded manifest, for diagnostics only. Never
      * gates staging sizes: a stale cached manifest once validated a stale
      * ksud while the exploit binaries looked fresh, crashing the rebased
@@ -76,10 +100,6 @@ class PayloadRepository(private val context: Context) {
         if (!file.exists()) return null
         SupportManifest.parse(file.readBytes()).targets
     }.getOrNull()
-
-    fun resolveTarget(profileId: String): TargetProfile = loadTargets()
-        .firstOrNull { it.profileId == profileId }
-        ?: error(context.getString(R.string.repo_profile_missing, profileId))
 
     fun download(profile: TargetProfile, onProgress: (String) -> Unit): VerifiedPayloads {
         val directory = File(context.filesDir, "payloads/${profile.profileId}").apply { mkdirs() }
@@ -199,6 +219,59 @@ class PayloadRepository(private val context: Context) {
         }
 
     companion object {
+        /**
+         * Firmware-aware auto-selection over an already-loaded feed.
+         *
+         * Model + kernel alone cannot tell `F946BXXS7GZE5` from `F946BXXS7GZH2`
+         * — both are SM-F946B on 5.15.189, but their payload offsets differ. So
+         * both profiles pass [TargetProfile.matches] on both firmwares and the
+         * tie is broken by how tightly each pins the firmware: a GZE5 device
+         * auto-resolves to the GZE5 payload (its hard gate) and can still reach
+         * the GZH2 payload by hand, while a GZH2 device only ever matches the
+         * GZH2 payload because the GZE5 one is rejected outright.
+         *
+         * Ties keep feed order (Kotlin's maxByOrNull returns the first maximum),
+         * so an unknown firmware — which ranks every profile 0 — resolves
+         * exactly as it did before firmware matching existed.
+         *
+         * Context-free so the selection rules are unit-testable.
+         */
+        fun selectTargetFor(targets: List<TargetProfile>, snapshot: DeviceSnapshot): TargetProfile? {
+            val firmware = effectiveFirmware(targets, snapshot)
+            return targets
+                .filter { it.matches(snapshot, firmware) }
+                .maxByOrNull { it.firmwareMatchRank(firmware) }
+        }
+
+        /**
+         * The firmware string the feed can actually speak about, or null.
+         *
+         * [DeviceSnapshot.firmware] reads a token off the fingerprint whether or
+         * not anything claims it. Distinguishing the two cases needs the whole
+         * feed, and the distinction is the whole point of the gate:
+         *
+         * - Claimed by some entry, but not by this one -> the known-bad
+         *   pairing. `F946BXXS7GZE5` is claimed (by the GZE5 entry) so the
+         *   GZE5-only profile hard-rejects a GZH2 device. This is the
+         *   requirement that must never be softened.
+         * - Claimed by no entry -> an unrecognised build. Resolving it to null
+         *   leaves the profile's firmware gate inert and the pre-firmware
+         *   model+kernel behaviour takes over, so a device on a build we have
+         *   never seen still resolves instead of hard-failing on firmware
+         *   alone and bricking the catalog.
+         *
+         * Feeding a claimed set of profiles is therefore what makes the gate
+         * safe: with no GZH2 entry in the feed, `F946BXXS7GZH2` is unclaimed
+         * and a GZE5 device-to-profile mismatch cannot be detected at all.
+         */
+        fun effectiveFirmware(targets: List<TargetProfile>, snapshot: DeviceSnapshot): String? {
+            val firmware = snapshot.firmware ?: return null
+            val claimed = targets.any { profile ->
+                profile.firmwareVersions.any { it.equals(firmware, ignoreCase = true) }
+            }
+            return firmware.takeIf { claimed }
+        }
+
         private const val COMMIT_API_URL =
             "https://api.github.com/repos/HyperRamzey/Root-My-Galaxy-Payloads/git/ref/heads/main"
         private const val RAW_REPOSITORY =

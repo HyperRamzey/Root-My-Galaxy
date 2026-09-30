@@ -184,6 +184,7 @@
     <string name="advanced_mode">Advanced mode</string>
     <string name="advanced_mode_description">Manually choose a device-compatible payload during installation</string>
     <string name="repo_profile_missing">Support profile %1$s is no longer available</string>
+    <string name="repo_profile_incompatible">Support profile %1$s is not compatible with this device (model, kernel, or firmware)</string>
     <string name="repo_feed_unreachable">GitHub feed unreachable after %1$d attempts — aborting instead of risking a stale payload</string>
     <string name="select_device_title">Choose a payload</string>
     <string name="select_device_description">Select a payload by device model and kernel version.</string>
@@ -193,6 +194,8 @@
     <string name="device_mismatch_body">This phone is %1$s, but the selected payload supports %2$s. Running it may crash or damage the device.</string>
     <string name="kernel_version_mismatch_title">Kernel version mismatch</string>
     <string name="kernel_version_mismatch_body">This phone uses kernel %1$s, but the selected payload supports %2$s. Offsets may be incompatible.</string>
+    <string name="firmware_mismatch_title">Firmware mismatch</string>
+    <string name="firmware_mismatch_body">This phone runs firmware %1$s, but the selected payload is built for %2$s. This combination is known to fail — choose the payload matching this firmware.</string>
     <string name="updater_available_title">An update is available</string>
     <string name="updater_available_body">Version %1$s is now available</string>
     <string name="updater_available_body_short">%1$s is available</string>

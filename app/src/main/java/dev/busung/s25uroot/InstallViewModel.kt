@@ -206,10 +206,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 appendLog(app.getString(R.string.log_adb_connected, idResult.output.trim()))
 
                 setPhase(InstallPhase.Checking, app.getString(R.string.status_checking_github))
+                val snapshot = DeviceSnapshot.current()
                 val profile = if (profileId == null) {
-                    repository.resolveTarget(DeviceSnapshot.current())
+                    repository.resolveTarget(snapshot)
                 } else {
-                    repository.resolveTarget(profileId)
+                    // Picked by hand from the target sheet, which lets the
+                    // user show profiles for other devices. Re-gate on the
+                    // snapshot so a wrong-firmware row cannot be staged.
+                    repository.resolveTarget(snapshot, profileId)
                 }
                 appendLog(app.getString(R.string.log_profile, profile.profileId))
                 updateHistoryProfile(profile.profileId)

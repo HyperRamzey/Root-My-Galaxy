@@ -57,4 +57,7 @@
         <item quantity="other">これらの実行とログは完全に削除されます。</item>
     </plurals>
     <string name="history_delete">削除</string>
+    <string name="firmware_mismatch_title">ファームウェアの不一致</string>
+    <string name="firmware_mismatch_body">この端末のファームウェアは %1$s ですが、選択した payload は %2$s 用です。この組み合わせは動作不良が既知です。このファームウェアに対応する payload を選択してください。</string>
+    <string name="repo_profile_incompatible">サポートプロファイル %1$s はこの端末（モデル、カーネル、またはファームウェア）と互換性がありません</string>
 </resources>

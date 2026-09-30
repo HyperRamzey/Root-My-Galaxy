@@ -24,10 +24,28 @@ Use only on devices you own or are explicitly authorized to test.
 <img width="200" alt="KakaoTalk_20260718_171127319" src="https://github.com/user-attachments/assets/8dde0443-12cf-4058-ba76-0337aefb92a0" />
 <img width="200" alt="KakaoTalk_20260718_171030202" src="https://github.com/user-attachments/assets/f656e8af-60a6-4fcb-a3db-d4232bede613" />
 
-The app selects a payload whose model list and three-part kernel version
-match the phone (e.g. `6.6.98-android15-8-...` matches `6.6.98`). Advanced
-mode filters the catalog by both values and allows manual selection with
-model and kernel-version warnings.
+The app selects a payload whose model list, three-part kernel version, and
+firmware pin match the phone (e.g. `6.6.98-android15-8-...` matches `6.6.98`).
+The firmware is read from the last build segment of `Build.FINGERPRINT` — not
+from the build display, which is shared across builds:
+
+    samsung/f946b/f946b:16/BP4A.251205.006/F946BXXS7GZH2:user/release-keys
+                                                    ^^^^^^^^^^^^^^
+
+`F946BXXS7GZE5` and `F946BXXS7GZH2` are both SM-F946B on kernel `5.15.189`, so
+model and kernel alone cannot separate them even though their payload offsets
+differ. A feed entry may therefore carry an optional `firmwareVersions` array:
+
+- One entry is a **hard pin**. The payload is rejected on any other firmware.
+- Two or more entries mean the payload is known-good on each, so it is merely
+  *allowed* — not required — on the others.
+- Absent (or a fingerprint too unusual to read) means no firmware opinion, and
+  matching stays on model + kernel exactly as before, so an unrecognised build
+  still resolves.
+
+Advanced mode filters the catalog by all three and allows manual selection
+with model, kernel-version, and firmware warnings. A firmware mismatch cannot
+be overridden; a wrong-firmware payload is a known-bad pairing.
 
 ### Payload delivery
 

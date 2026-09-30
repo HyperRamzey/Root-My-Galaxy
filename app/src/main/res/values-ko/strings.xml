@@ -58,4 +58,7 @@
         <item quantity="other">이 실행들과 로그가 영구적으로 삭제됩니다.</item>
     </plurals>
     <string name="history_delete">삭제</string>
+    <string name="firmware_mismatch_title">펌웨어 불일치</string>
+    <string name="firmware_mismatch_body">이 기기의 펌웨어는 %1$s 이지만 선택한 payload는 %2$s 용입니다. 이 조합은 오류가 알려진 조합입니다. 이 펌웨어에 맞는 payload를 선택하세요.</string>
+    <string name="repo_profile_incompatible">지원 프로필 %1$s 은(는) 이 기기(모델, 커널 또는 펌웨어)와 호환되지 않습니다</string>
 </resources>

@@ -306,6 +306,14 @@ private data class LanguageOption(@StringRes val label: Int, val tag: String)
 private enum class CompatibilityWarning {
     Device,
     KernelVersion,
+    /**
+     * Firmware suffix is not one this payload supports. Distinct from the
+     * other two because the offsets themselves are wrong, and unlike them it
+     * is NOT overridable: the known-bad pairing is exactly what the GZH2
+     * payload exists to replace, so continuing would run a GZE5 exploit on a
+     * GZH2 device.
+     */
+    Firmware,
 }
 
 private val languageOptions = listOf(
@@ -360,6 +368,13 @@ private fun RootApp(
     var selectedProfile by remember { mutableStateOf<TargetProfile?>(null) }
     var compatibilityWarning by remember { mutableStateOf<CompatibilityWarning?>(null) }
     val device = remember { DeviceSnapshot.current() }
+    // Firmware the loaded feed can speak about, or null when it has no opinion
+    // on this build. Resolved against the catalog rather than read straight off
+    // the fingerprint so the warning below matches what the installer will
+    // actually accept — see PayloadRepository.effectiveFirmware.
+    val deviceFirmware = remember(targetCatalog, device) {
+        PayloadRepository.effectiveFirmware(targetCatalog.profiles, device)
+    }
     val context = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
@@ -421,6 +436,7 @@ private fun RootApp(
                 compatibilityWarning = when {
                     !profile.matchesDevice(device) -> CompatibilityWarning.Device
                     !profile.matchesKernelVersion(device) -> CompatibilityWarning.KernelVersion
+                    !profile.matchesFirmware(deviceFirmware) -> CompatibilityWarning.Firmware
                     else -> null
                 }
                 if (compatibilityWarning == null) showInstallConfirmation = true
@@ -442,6 +458,7 @@ private fun RootApp(
                     stringResource(when (warning) {
                         CompatibilityWarning.Device -> R.string.device_mismatch_title
                         CompatibilityWarning.KernelVersion -> R.string.kernel_version_mismatch_title
+                        CompatibilityWarning.Firmware -> R.string.firmware_mismatch_title
                     }),
                 )
             },
@@ -458,27 +475,42 @@ private fun RootApp(
                             device.kernelVersion,
                             profile.supportedKernelVersions,
                         )
+                        CompatibilityWarning.Firmware -> stringResource(
+                            R.string.firmware_mismatch_body,
+                            deviceFirmware.orEmpty(),
+                            profile.supportedFirmwareVersions,
+                        )
                     },
                 )
             },
             confirmButton = {
-                FilledTonalButton(
-                    onClick = {
-                        clickHaptic(view)
-                        compatibilityWarning = when (warning) {
-                            CompatibilityWarning.Device -> if (!profile.matchesKernelVersion(device)) {
-                                CompatibilityWarning.KernelVersion
-                            } else {
-                                null
+                // A firmware mismatch is a hard block, not a warning: there is
+                // no override, because proceeding is precisely the
+                // wrong-offsets crash the newer firmware's payload fixes. The
+                // dialog only offers "pick another target".
+                if (warning != CompatibilityWarning.Firmware) {
+                    FilledTonalButton(
+                        onClick = {
+                            clickHaptic(view)
+                            compatibilityWarning = when (warning) {
+                                CompatibilityWarning.Device -> if (!profile.matchesKernelVersion(device)) {
+                                    CompatibilityWarning.KernelVersion
+                                } else if (!profile.matchesFirmware(deviceFirmware)) {
+                                    CompatibilityWarning.Firmware
+                                } else {
+                                    null
+                                }
+                                CompatibilityWarning.KernelVersion ->
+                                    if (!profile.matchesFirmware(deviceFirmware)) CompatibilityWarning.Firmware else null
+                                CompatibilityWarning.Firmware -> null
                             }
-                            CompatibilityWarning.KernelVersion -> null
-                        }
-                        if (compatibilityWarning == null) {
-                            showInstallConfirmation = true
-                        }
-                    },
-                ) {
-                    Text(stringResource(R.string.action_continue))
+                            if (compatibilityWarning == null) {
+                                showInstallConfirmation = true
+                            }
+                        },
+                    ) {
+                        Text(stringResource(R.string.action_continue))
+                    }
                 }
             },
             dismissButton = {
@@ -1220,7 +1252,14 @@ private fun DeviceCard(device: DeviceSnapshot) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             InfoRow(Icons.Rounded.Memory, stringResource(R.string.device), "${device.manufacturer} ${device.model} (${device.device})")
-            InfoRow(Icons.Rounded.Code, stringResource(R.string.firmware), device.buildId)
+            // The firmware suffix, not the build display: the two firmwares
+            // this app separates share a build id, so showing buildId under a
+            // "Firmware" label hid the one value matching actually depends on.
+            InfoRow(
+                Icons.Rounded.Code,
+                stringResource(R.string.firmware),
+                device.firmware ?: device.buildId,
+            )
             InfoRow(Icons.Rounded.Info, stringResource(R.string.system), "Android ${device.androidRelease} (API ${device.sdk})")
             InfoRow(
                 icon = Icons.Rounded.Info,
@@ -2094,9 +2133,14 @@ private fun TargetSelectionSheet(
     var showOnlyMyDevice by remember { mutableStateOf(true) }
     var selectedProfileId by remember { mutableStateOf<String?>(null) }
     val view = LocalView.current
-    val visibleProfiles = remember(catalog.profiles, showOnlyMyDevice, device) {
+    // Same feed-resolved firmware the installer gates on, so "show only my
+    // device" hides the known-bad row instead of merely warning about it.
+    val firmware = remember(catalog.profiles, device) {
+        PayloadRepository.effectiveFirmware(catalog.profiles, device)
+    }
+    val visibleProfiles = remember(catalog.profiles, showOnlyMyDevice, firmware) {
         if (showOnlyMyDevice) {
-            catalog.profiles.filter { it.matches(device) }
+            catalog.profiles.filter { it.matches(device, firmware) }
         } else {
             catalog.profiles
         }
@@ -2131,7 +2175,7 @@ private fun TargetSelectionSheet(
                         onValueChange = { enabled ->
                             clickHaptic(view)
                             showOnlyMyDevice = enabled
-                            if (enabled && selectedProfile?.matches(device) == false) {
+                            if (enabled && selectedProfile?.matches(device, firmware) == false) {
                                 selectedProfileId = null
                             }
                         },

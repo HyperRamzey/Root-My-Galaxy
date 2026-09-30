@@ -158,4 +158,7 @@
         <item quantity="other">Эти запуски и их журналы будут удалены навсегда.</item>
     </plurals>
     <string name="history_delete">Удалить</string>
+    <string name="firmware_mismatch_title">Несовпадение прошивки</string>
+    <string name="firmware_mismatch_body">На этом устройстве прошивка %1$s, а выбранный payload рассчитан на %2$s. Эта комбинация заведомо не работает — выберите payload под эту прошивку.</string>
+    <string name="repo_profile_incompatible">Профиль поддержки %1$s несовместим с этим устройством (модель, ядро или прошивка)</string>
 </resources>

@@ -168,4 +168,7 @@
         <item quantity="other">這些執行紀錄及其日誌將被永久刪除。</item>
     </plurals>
     <string name="history_delete">刪除</string>
+    <string name="firmware_mismatch_title">韌體不相容</string>
+    <string name="firmware_mismatch_body">本機韌體為 %1$s，但所選 payload 是為 %2$s 建置的。該組合已知會失敗——請選擇與本機韌體相符的 payload。</string>
+    <string name="repo_profile_incompatible">支援設定檔 %1$s 與本裝置不相容（型號、核心或韌體）</string>
 </resources>

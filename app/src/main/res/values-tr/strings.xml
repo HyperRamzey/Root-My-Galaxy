@@ -149,4 +149,7 @@
         <item quantity="other">Bu kayıtlar ve günlükleri kalıcı olarak silinecek.</item>
     </plurals>
     <string name="history_delete">Sil</string>
+    <string name="firmware_mismatch_title">Yazılım uyuşmazlığı</string>
+    <string name="firmware_mismatch_body">Bu telefon %1$s yazılımını kullanıyor, ancak seçilen payload %2$s için hazırlanmış. Bu birleşimin çalışmadığı biliniyor — bu yazılıma uygun payloadu seçin.</string>
+    <string name="repo_profile_incompatible">Destek profili %1$s bu cihazla uyumlu değil (model, çekirdek veya yazılım)</string>
 </resources>
