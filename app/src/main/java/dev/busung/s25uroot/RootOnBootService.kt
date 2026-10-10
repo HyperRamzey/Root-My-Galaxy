@@ -510,10 +510,20 @@ class RootOnBootService : Service() {
         // ksud stages or kill zygote itself: duplicating the native actors
         // caused concurrent framework restarts and soft-reboot loops. Wait
         // for the boot-scoped done marker instead.
+        //
+        // Stall-aware wait: the keeper is slow under load (6+ min observed
+        // on q5q) but makes progress; a fixed deadline alone reported a
+        // false failure for a flow that completed a minute later. The
+        // keeper appends to ksu-keeper.log as it works, so a changing
+        // mtime:size signature extends the wait; only a silent keeper (or
+        // the absolute cap) ends it. See ModuleWaitTracker.
         running(getString(R.string.boot_stage_modules))
-        val deadline = System.currentTimeMillis() + MODULE_WAIT_MS
+        val waiter = ModuleWaitTracker(
+            System.currentTimeMillis(), MODULE_WAIT_MS, KEEPER_STALL_MS,
+        )
         var applied = false
-        while (System.currentTimeMillis() < deadline) {
+        while (true) {
+            val now = System.currentTimeMillis()
             val done = adb.shell(
                 "cat /data/local/tmp/.cve43499-modules-done 2>/dev/null"
             ).output.trim()
@@ -528,12 +538,16 @@ class RootOnBootService : Service() {
             // late-load succeeded even if the done-marker was lost (e.g. an
             // apply actor died before recording completion). Accept it after
             // a grace period instead of reporting a false failure.
-            if (System.currentTimeMillis() - started > KSU_ACTIVE_GRACE_MS &&
+            if (now - started > KSU_ACTIVE_GRACE_MS &&
                 RootStatusProbe.isActive()
             ) {
                 applied = true
                 break
             }
+            val keeperSig = adb.shell(
+                "stat -c '%Y:%s' /data/local/tmp/ksu-keeper.log 2>/dev/null"
+            ).output.trim()
+            if (waiter.timedOut(now, keeperSig)) break
             Thread.sleep(10_000)
         }
         // Modules confirmed: full battery wind-down before dropping the
@@ -679,12 +693,17 @@ class RootOnBootService : Service() {
     companion object {
         private const val CHANNEL_ID = "root_on_boot"
         private const val NOTIFICATION_ID = 0x524F42
-        private const val MODULE_WAIT_MS = 300_000L
+        private const val MODULE_WAIT_MS = 600_000L
         private const val MAX_BOOT_RETRIES = 6
         private const val LEGACY_KSUD_NAME = "ksud-s25u-kdp"
         /** Wait this long for a fresh done-marker before trusting the
          * KernelSU-active probe as a success fallback. */
         private const val KSU_ACTIVE_GRACE_MS = 120_000L
+        /** A keeper that stops appending to ksu-keeper.log for this long is
+         * treated as stuck: end the module wait even before MODULE_WAIT_MS.
+         * The log advances on every keeper event (including ticks), so a
+         * live keeper always resets this. */
+        private const val KEEPER_STALL_MS = 180_000L
         /** Upper bound for one full pipeline (connect + staging + exploit +
          * late-load + module wait). */
         private const val PIPELINE_WAKELOCK_MS = 20 * 60_000L
