@@ -2121,6 +2121,14 @@ private fun UpdateSettingsCard(
     }
 }
 
+/** Per-row firmware relation for the target picker (informational only;
+ * the install gate in PayloadRepository is authoritative). */
+private enum class FirmwareMatch {
+    Yours,
+    NotYours,
+    Unknown,
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TargetSelectionSheet(
@@ -2260,6 +2268,56 @@ private fun TargetSelectionSheet(
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    // Firmware the exploit was built for, plus how
+                                    // it relates to this device's own build. Uses
+                                    // the raw fingerprint token (not the
+                                    // feed-resolved one) so an unrecognised
+                                    // build still reads "not your build"
+                                    // instead of a bare pin list.
+                                    val firmwareMatch = remember(profile, device) {
+                                        if (profile.firmwareVersions.isEmpty()) {
+                                            null
+                                        } else {
+                                            val mine = device.firmware
+                                            when {
+                                                mine == null -> FirmwareMatch.Unknown
+                                                profile.firmwareVersions.any {
+                                                    it.equals(mine, ignoreCase = true)
+                                                } -> FirmwareMatch.Yours
+                                                else -> FirmwareMatch.NotYours
+                                            }
+                                        }
+                                    }
+                                    if (firmwareMatch != null) {
+                                        val firmwarePins = profile.firmwareVersions
+                                            .sorted()
+                                            .joinToString()
+                                        Text(
+                                            text = when (firmwareMatch) {
+                                                FirmwareMatch.Yours -> stringResource(
+                                                    R.string.target_firmware_pins_yours,
+                                                    firmwarePins,
+                                                )
+                                                FirmwareMatch.NotYours -> stringResource(
+                                                    R.string.target_firmware_pins_not_yours,
+                                                    firmwarePins,
+                                                )
+                                                FirmwareMatch.Unknown -> stringResource(
+                                                    R.string.target_firmware_pins,
+                                                    firmwarePins,
+                                                )
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = when (firmwareMatch) {
+                                                FirmwareMatch.Yours ->
+                                                    MaterialTheme.colorScheme.primary
+                                                FirmwareMatch.NotYours ->
+                                                    MaterialTheme.colorScheme.error
+                                                FirmwareMatch.Unknown ->
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }

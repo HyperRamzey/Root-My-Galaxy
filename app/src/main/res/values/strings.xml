@@ -187,9 +187,12 @@
     <string name="repo_profile_incompatible">Support profile %1$s is not compatible with this device (model, kernel, or firmware)</string>
     <string name="repo_feed_unreachable">GitHub feed unreachable after %1$d attempts — aborting instead of risking a stale payload</string>
     <string name="select_device_title">Choose a payload</string>
-    <string name="select_device_description">Select a payload by device model and kernel version.</string>
+    <string name="select_device_description">Select a payload by device model, kernel version and firmware.</string>
     <string name="show_my_device_only">Show only my device</string>
     <string name="no_matching_devices">No payloads match this model and kernel version.</string>
+    <string name="target_firmware_pins">Firmware: %1$s</string>
+    <string name="target_firmware_pins_yours">Firmware: %1$s · your build</string>
+    <string name="target_firmware_pins_not_yours">Firmware: %1$s · not your build</string>
     <string name="device_mismatch_title">Device mismatch</string>
     <string name="device_mismatch_body">This phone is %1$s, but the selected payload supports %2$s. Running it may crash or damage the device.</string>
     <string name="kernel_version_mismatch_title">Kernel version mismatch</string>
