@@ -566,7 +566,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         private const val EXPLOIT_ATTEMPTS = "24"
         private const val P0_ATTEMPT_TIMEOUT_SEC = "45"
-        private const val EXPLOIT_ATTEMPT_TIMEOUT_SEC = "120"
+        // Full route budget: slide (~60s) + mp triggers/wait (~30s) +
+        // scan/chain (~60s) + cascade wait (45s) + grace. 120s beheaded
+        // slow-but-healthy runs mid-wait (measured: SIGKILL inside the
+        // second mp wait with root already achieved). Matches the boot
+        // flow's 600s; the writer-once guard still bounds total work to
+        // ~2 real attempts per boot.
+        private const val EXPLOIT_ATTEMPT_TIMEOUT_SEC = "600"
         private const val INSTALL_RECEIPT = "install_receipt"
         private const val RECEIPT_BOOT_TOKEN = "kernel_boot_id"
         private const val RECEIPT_VERIFIED = "verified"
