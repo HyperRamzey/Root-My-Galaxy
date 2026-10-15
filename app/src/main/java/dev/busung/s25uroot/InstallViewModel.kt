@@ -328,9 +328,26 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
 
         val rawLog = lastRawLog.ifBlank { adb.readLog(remoteLog) }
-        cacheP0Offset(bootToken, rawLog)
-        publishExploitLog(logPrefix, rawLog)
-        require(rawLog.contains("exploit completed")) {
+        // The supervisor kills zygote the moment it writes success, which
+        // drops this ADB session for minutes under load: a stream that ends
+        // before the marker (or a single read over the dying session) must
+        // not become "success markers not found" for a run that completed.
+        // f946b.log is the source of truth — poll it patiently.
+        var verifiedLog = rawLog
+        if (!verifiedLog.contains("exploit completed")) {
+            appendLog("[*] stream ended before the success marker; verifying on device (framework restarts take minutes)")
+            val recoveryDeadline = System.currentTimeMillis() + EXPLOIT_RECOVERY_MS
+            while (!verifiedLog.contains("exploit completed") &&
+                System.currentTimeMillis() < recoveryDeadline
+            ) {
+                val fresh = runCatching { adb.readLog(remoteLog) }.getOrNull()
+                if (!fresh.isNullOrBlank() && fresh.length >= verifiedLog.length) verifiedLog = fresh
+                if (!verifiedLog.contains("exploit completed")) Thread.sleep(10_000)
+            }
+        }
+        cacheP0Offset(bootToken, verifiedLog)
+        publishExploitLog(logPrefix, verifiedLog)
+        require(verifiedLog.contains("exploit completed")) {
             app.getString(R.string.error_success_marker)
         }
         appendLog(app.getString(R.string.log_bootstrap_root))
@@ -445,6 +462,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
         if (suOk) {
             appendLog("[+] su available, activating modules via ksud lifecycle")
+            // Re-check before driving: the su settle window above is exactly
+            // when the supervisor finishes and writes its marker. Driving
+            // without re-checking is how a completed native apply got a
+            // second zygote kill (observed: reboot, working modules, then
+            // another reboot plus a FAILED verdict).
+            if (!force && isNativeApplyDone(adb)) {
+                appendLog("[+] supervisor completed during su settle (single reboot kept)")
+                appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+                return
+            }
             // Run ksud stages in background with full fd detach — daemonized
             // children inherit the ADB pipe and keep the stream open forever.
             // setsid + & + redirect all fds ensures the shell returns instantly.
@@ -462,7 +489,14 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 appendLog("[!] zygote kill: ${kill.output.trim()}")
             }
-            appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+            // Our own zygote kill drops this ADB session by design: every
+            // transport use below must tolerate that, or a working apply
+            // reports FAILED.
+            runCatching {
+                appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+            }.onFailure {
+                appendLog("[*] session dropped by our own zygote kill (expected)")
+            }
             return
         }
 
@@ -473,10 +507,22 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }.getOrDefault("").contains("ok")
         val helperCmd =
             if (stagedHelper) "/data/local/tmp/cve-2026-43499-root" else REMOTE_HELPER_PATH
-        val apply = adb.shell("$helperCmd --apply-modules")
+        val apply = runCatching { adb.shell("$helperCmd --apply-modules") }.getOrNull()
+        if (apply == null) {
+            // Transport died mid-apply: the daemon path kills zygote
+            // itself, which drops ADB by design. The keeper log and the
+            // done-marker are the source of truth — report neutral, never
+            // FAILED, for a session WE broke.
+            appendLog("[*] session dropped during daemon apply (zygote restart in progress); see keeper log")
+            return
+        }
         if (apply.exitCode == 0 && apply.output.contains("zygote")) {
             appendLog(app.getString(R.string.log_modules_zygote_restarted))
-            appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+            runCatching {
+                appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+            }.onFailure {
+                appendLog("[*] session dropped by daemon zygote kill (expected)")
+            }
             return
         }
         appendLog("[-] ${app.getString(R.string.error_modules_restart, apply.output.trim().takeLast(120))}")
@@ -651,6 +697,10 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
          * supervisor's zygote kill drops the transport. */
         private const val SU_SETTLE_ATTEMPTS = 6
         private const val SU_SETTLE_RETRY_MS = 10_000L
+        /** Bounds the exploit-outcome recovery poll: the supervisor kills
+         * zygote right after writing success, dropping ADB for minutes
+         * under load. A genuinely failed run still fails, just later. */
+        private const val EXPLOIT_RECOVERY_MS = 300_000L
         private const val EXPLOIT_ATTEMPTS = "24"
         private const val P0_ATTEMPT_TIMEOUT_SEC = "45"
         // Full route budget: slide (~60s) + mp triggers/wait (~30s) +

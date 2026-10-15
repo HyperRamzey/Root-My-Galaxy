@@ -434,17 +434,27 @@ class RootOnBootService : Service() {
             // session — the old socket is broken by definition here — with
             // a bounded retry, and adopt the fresh session for the
             // remaining stages if the run actually succeeded.
+            // Patient recovery: the supervisor kills zygote right after
+            // writing success, which drops ADB for minutes under load
+            // (observed: marker in f946b.log, pipeline failed after a 15 s
+            // recovery). Poll up to EXPLOIT_RECOVERY_MS so a completed run
+            // is adopted instead of failed.
+            running(
+                getString(R.string.boot_stage_exploit),
+                "stream dropped; verifying outcome on device",
+            )
             runCatching { adb.close() }
-            repeat(3) {
+            val recoveryDeadline = System.currentTimeMillis() + EXPLOIT_RECOVERY_MS
+            while (!exploitSucceeded && System.currentTimeMillis() < recoveryDeadline) {
                 runCatching {
                     adb = WirelessAdbSession.open(this, portDiscoveryTimeoutMs = 15_000)
+                    activeSession = adb
                     if (adb.readLog(remoteLog).contains("exploit completed")) {
                         exploitSucceeded = true
                         LiveLog.add("• stream dropped; outcome verified via fresh session")
                     }
                 }
-                if (exploitSucceeded) return@repeat
-                Thread.sleep(5_000)
+                if (!exploitSucceeded) Thread.sleep(10_000)
             }
         }
         if (!exploitSucceeded) {
@@ -522,15 +532,45 @@ class RootOnBootService : Service() {
             System.currentTimeMillis(), MODULE_WAIT_MS, KEEPER_STALL_MS,
         )
         var applied = false
+        var lastReconnectMs = 0L
+        // Reopens the ADB session after the supervisor's own zygote kill
+        // drops it mid-wait (same pattern as the exploit-stream recovery
+        // above). Returns false only when the transport is truly gone.
+        fun reconnectModuleSession(): Boolean = runCatching {
+            runCatching { adb.close() }
+            adb = WirelessAdbSession.open(this, portDiscoveryTimeoutMs = 15_000)
+            activeSession = adb
+            true
+        }.getOrDefault(false)
         while (true) {
             val now = System.currentTimeMillis()
-            val done = adb.shell(
-                "cat /data/local/tmp/.cve43499-modules-done 2>/dev/null"
-            ).output.trim()
-            val live = adb.shell(
-                "cat /proc/sys/kernel/random/boot_id 2>/dev/null"
-            ).output.trim()
-            if (live.isNotEmpty() && done.startsWith(live)) {
+            // Every read is transport-fallible: the supervisor kills zygote
+            // (dropping ADB) and writes the done-marker after. A dead
+            // session here must reconnect and keep waiting — it must never
+            // become a FAILED verdict for a flow the keeper completes a
+            // minute later (observed false failure with done-this-boot).
+            var done: String? = null
+            var live: String? = null
+            var keeperSig: String? = null
+            runCatching {
+                done = adb.shell(
+                    "cat /data/local/tmp/.cve43499-modules-done 2>/dev/null",
+                ).output.trim()
+                live = adb.shell(
+                    "cat /proc/sys/kernel/random/boot_id 2>/dev/null",
+                ).output.trim()
+                keeperSig = adb.shell(
+                    "stat -c '%Y:%s' /data/local/tmp/ksu-keeper.log 2>/dev/null",
+                ).output.trim()
+            }.onFailure {
+                if (now - lastReconnectMs > MODULE_RECONNECT_MIN_MS &&
+                    reconnectModuleSession()
+                ) {
+                    lastReconnectMs = now
+                    LiveLog.add("• module wait: session dropped (zygote kill), reconnected")
+                }
+            }
+            if (!live.isNullOrEmpty() && (done ?: "").startsWith(live!!)) {
                 applied = true
                 break
             }
@@ -544,10 +584,11 @@ class RootOnBootService : Service() {
                 applied = true
                 break
             }
-            val keeperSig = adb.shell(
-                "stat -c '%Y:%s' /data/local/tmp/ksu-keeper.log 2>/dev/null"
-            ).output.trim()
-            if (waiter.timedOut(now, keeperSig)) break
+            // Unreadable keeper log just means no progress signal this
+            // round (possibly mid-reconnect): the tracker treats "" as
+            // silence-before-start, never a stall verdict, so only the
+            // absolute cap can end the wait.
+            if (waiter.timedOut(now, keeperSig ?: "")) break
             Thread.sleep(10_000)
         }
         // Modules confirmed: full battery wind-down before dropping the
@@ -562,8 +603,13 @@ class RootOnBootService : Service() {
         // 8. File-mark verification: files created by root contexts after
         // the folder heal (daemon socket, ksud staging, markers, logs) can
         // carry foreign SELinux labels that re-break shell access for the
-        // rest of this boot and the next run's staging.
-        LiveLog.add("• file marks: ${ExploitStaging.healFileMarks(adb)}")
+        // rest of this boot and the next run's staging. Best-effort: the
+        // session may be dead after the supervisor's kill even on success.
+        runCatching {
+            LiveLog.add("• file marks: ${ExploitStaging.healFileMarks(adb)}")
+        }.onFailure {
+            LiveLog.add("• file marks: skipped (session dropped post-apply)")
+        }
         } finally {
             runCatching { adb.close() }
         }
@@ -704,6 +750,13 @@ class RootOnBootService : Service() {
          * The log advances on every keeper event (including ticks), so a
          * live keeper always resets this. */
         private const val KEEPER_STALL_MS = 180_000L
+        /** Minimum gap between module-wait session reconnects: the
+         * supervisor's zygote kill drops ADB for a while, and hammering
+         * reconnects every 10 s poll would only add load. */
+        private const val MODULE_RECONNECT_MIN_MS = 30_000L
+        /** Bounds the exploit-outcome recovery poll (see above): the
+         * supervisor's zygote kill drops ADB for minutes under load. */
+        private const val EXPLOIT_RECOVERY_MS = 300_000L
         /** Upper bound for one full pipeline (connect + staging + exploit +
          * late-load + module wait). */
         private const val PIPELINE_WAKELOCK_MS = 20 * 60_000L
