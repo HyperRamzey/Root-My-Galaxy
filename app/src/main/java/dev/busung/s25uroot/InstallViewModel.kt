@@ -65,14 +65,19 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         refresh()
     }
 
-    /** True when any evidence exists that this device has been rooted
-     * before: a verified install/boot receipt or a succeeded history entry.
-     * Receipts persist across history clears, so a cleared history alone
-     * does not downgrade a previously-rooted device. */
-    private fun wasEverRooted(): Boolean {
+    /** True only when the install/boot receipt matches THIS boot's token.
+     * A stale receipt (previous boot) is NOT evidence root is live now:
+     * late-load modules cannot survive reboot, so after a reboot su
+     * absence means unrooted — the old ever-rooted check (receipt boolean
+     * without a boot comparison, plus any past history success) kept
+     * claiming "Root is active" for the whole next boot. History is
+     * excluded for the same reason: a past success says nothing about
+     * this boot. */
+    private fun wasRootedThisBoot(): Boolean {
+        val bootToken = currentBootToken() ?: return false
         val receipt = app.getSharedPreferences(INSTALL_RECEIPT, Application.MODE_PRIVATE)
-        if (receipt.getBoolean(RECEIPT_VERIFIED, false)) return true
-        return mutableHistory.value.any { it.result == InstallRunResult.Succeeded }
+        return receipt.getBoolean(RECEIPT_VERIFIED, false) &&
+            receipt.getString(RECEIPT_BOOT_TOKEN, null) == bootToken
     }
 
     fun refresh() {
@@ -91,13 +96,29 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             // "Root active, manager unregistered" requires evidence root is
-            // really live: either su answered and denied us (sucompat only
-            // answers when KernelSU is loaded) or the device was rooted
-            // before (receipt/history). A bare missing-su on a never-rooted
-            // device must fall through to the honest "Not installed" state —
-            // that is exactly the lie this guard removes.
+            // really live THIS boot: either su is present but refusing us
+            // (DENIED — sucompat only answers when KernelSU is loaded, and
+            // a late-load module cannot survive reboot, so a denying su
+            // binary is itself this-boot evidence) or the receipt matches
+            // this boot (manager registration was skipped). A bare
+            // missing-su (ABSENT) with a stale/absent receipt is the normal
+            // unrooted state after reboot — that is exactly the lie the old
+            // ever-rooted guard told ("Root is active" all next boot).
+            // See showUnregisteredBanner (pure, unit-tested).
+            // Manual-launcher roots never write the app receipt, so ABSENT
+            // su with no receipt would read as unrooted even while live.
+            // The native done-marker ("$bootId $uptime") is written by the
+            // supervisor after its own zygote kill — a fresh marker is
+            // this-boot proof of a completed apply. Best-effort: the app
+            // domain may be denied the read; failure just means no signal.
+            val nativeMarkerLive = runCatching {
+                val done = File("/data/local/tmp/.cve43499-modules-done")
+                    .readText(Charsets.US_ASCII).trim()
+                val boot = currentBootToken() ?: return@runCatching false
+                isNativeApplyDoneOutput(done, boot)
+            }.getOrDefault(false)
             val managerUnregistered = RootStatusProbe.isManagerUnregistered() &&
-                (SuProbe.lastFailure == SuProbe.Failure.DENIED || wasEverRooted())
+                (showUnregisteredBanner(SuProbe.lastFailure, wasRootedThisBoot()) || nativeMarkerLive)
             if (managerUnregistered) {
                 // Pairing revoked: the boot pipeline cannot run at all, so
                 // root is NOT live this boot (reboots cleared it) — on every
@@ -367,7 +388,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val adb = WirelessAdbSession.open(app)
-                applyModulesViaAdb(adb)
+                applyModulesViaAdb(adb, force = true)
                 adb.close()
             } catch (error: Throwable) {
                 appendLog("[-] ${describeFailure(error)}")
@@ -376,13 +397,53 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun applyModulesViaAdb(adb: WirelessAdbSession) {
+    /** Impure wrapper around [isNativeApplyDoneOutput]: reads the native
+     * done-marker and this boot's id over the ADB session. False on any
+     * transport error so a broken session falls through to the su drive
+     * instead of silently claiming completion. */
+    private fun isNativeApplyDone(adb: WirelessAdbSession): Boolean = runCatching {
+        val done = adb.shell(
+            "cat /data/local/tmp/.cve43499-modules-done 2>/dev/null",
+        ).output.trim()
+        val live = adb.shell(
+            "cat /proc/sys/kernel/random/boot_id 2>/dev/null",
+        ).output.trim()
+        isNativeApplyDoneOutput(done, live)
+    }.getOrDefault(false)
+
+    private fun applyModulesViaAdb(adb: WirelessAdbSession, force: Boolean = false) {
         appendLog(app.getString(R.string.log_modules_applying))
+
+        // Single-reboot contract (auto flows only): the payload supervisor
+        // auto-triggers late-load + apply-modules (including its own zygote
+        // kill) immediately after exploit success, before the app regains
+        // control. When the native done-marker is already fresh for this
+        // boot, driving ksud stages and killing zygote here would be a
+        // SECOND soft-reboot for no gain — verify and return instead. A
+        // manual tap (force=true) is an explicit user request for another
+        // reboot and always drives.
+        if (!force && isNativeApplyDone(adb)) {
+            appendLog("[+] modules already applied by payload supervisor (single reboot kept)")
+            appendLog("[*] file marks: ${ExploitStaging.healFileMarks(adb)}")
+            return
+        }
 
         // Primary path: use `su -c` which works under Enforcing once shell
         // has been granted root by KernelSU (persists across reboots).
-        val suCheck = adb.shell("su -c id 2>&1")
-        if (suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
+        // sucompat and the ADB transport need seconds to settle after the
+        // supervisor's zygote kill drops the session: a single immediate
+        // `su -c id` reports a false "su connection failed". Retry with
+        // backoff before falling back to the daemon path.
+        var suOk = false
+        for (attempt in 0 until SU_SETTLE_ATTEMPTS) {
+            val suCheck = runCatching { adb.shell("su -c id 2>&1") }.getOrNull()
+            if (suCheck != null && suCheck.exitCode == 0 && suCheck.output.contains("uid=0")) {
+                suOk = true
+                break
+            }
+            if (attempt + 1 < SU_SETTLE_ATTEMPTS) Thread.sleep(SU_SETTLE_RETRY_MS)
+        }
+        if (suOk) {
             appendLog("[+] su available, activating modules via ksud lifecycle")
             // Run ksud stages in background with full fd detach — daemonized
             // children inherit the ADB pipe and keep the stream open forever.
@@ -431,7 +492,7 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             try {
                 appendLog(app.getString(R.string.log_modules_applying))
                 val adb = WirelessAdbSession.open(app)
-                applyModulesViaAdb(adb)
+                applyModulesViaAdb(adb, force = true)
                 // also log that soft-reboot was manually triggered
                 appendLog("[+] soft-reboot triggered")
                 adb.close()
@@ -564,6 +625,32 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
     }
 
     companion object {
+        /** Pure decision for the "root live but manager unregistered"
+         * banner (unit-tested in InstallApplyLogicTest).
+         *
+         * DENIED (su present but refusing) is itself this-boot evidence
+         * that KernelSU is loaded — a late-load module cannot survive
+         * reboot, so a denying su binary means live root. ABSENT (no su
+         * at all) is only meaningful with a this-boot receipt (e.g. the
+         * exploit skipped manager registration); without one it is the
+         * normal unrooted state after reboot. */
+        internal fun showUnregisteredBanner(
+            lastFailure: SuProbe.Failure,
+            receiptThisBoot: Boolean,
+        ): Boolean = lastFailure == SuProbe.Failure.DENIED || receiptThisBoot
+
+        /** Pure check for the single-reboot contract (unit-tested):
+         * the native supervisor wrote "$bootId $uptime" into the
+         * done-marker after its own zygote kill. */
+        internal fun isNativeApplyDoneOutput(doneContent: String, liveBootId: String): Boolean =
+            liveBootId.isNotEmpty() &&
+                (doneContent == liveBootId || doneContent.startsWith("$liveBootId "))
+
+        /** su settle retries before declaring "su not available": sucompat
+         * and the ADB session need seconds to settle after the
+         * supervisor's zygote kill drops the transport. */
+        private const val SU_SETTLE_ATTEMPTS = 6
+        private const val SU_SETTLE_RETRY_MS = 10_000L
         private const val EXPLOIT_ATTEMPTS = "24"
         private const val P0_ATTEMPT_TIMEOUT_SEC = "45"
         // Full route budget: slide (~60s) + mp triggers/wait (~30s) +
@@ -582,10 +669,8 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         private const val P0_OFFSET_ENV = "SLIDE_P0_OFFSET"
         private const val P0_OFFSET_MAX = 0x1f0000L
         private const val P0_OFFSET_MASK = 0xffffL
-        private const val REMOTE_PAYLOAD_PATH = "/data/local/tmp/ksu-payload"
         private const val REMOTE_HELPER_PATH = "/data/local/tmp/ksu-helper"
         private const val REMOTE_KSUD_STAGE_PATH = "/data/local/tmp/.ksud-stage"
-        private const val REMOTE_LOG_PATH = "/data/local/tmp/ksu-exploit.log"
         private val ANSI_ESCAPE = Regex("\u001B\\[[0-?]*[ -/]*[@-~]")
         private val P0_OFFSET_PATTERN = Regex(
             "slide-kaslr-ok[^\\n]*slide=([0-9a-fA-F]{16})",
