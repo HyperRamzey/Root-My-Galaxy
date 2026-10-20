@@ -78,6 +78,14 @@ object AppPreferences {
         prefs(context).edit()
             .putBoolean(AUTO_APPLY_MODULES, enabled)
             .apply()
+        // The HZIJ boot chain runs before unlock and reads the device-
+        // protected copy through prefs(); without this mirror the switch is
+        // silently ignored on exactly the fast path it is meant for.
+        runCatching {
+            deviceProtectedPrefs(context).edit()
+                .putBoolean(AUTO_APPLY_MODULES, enabled)
+                .apply()
+        }
     }
 
     fun autoRootOnBoot(context: Context): Boolean =
@@ -115,6 +123,23 @@ object AppPreferences {
                 .apply()
         }
         android.util.Log.i("AppPreferences", "autoRootOnBoot DP mirror: $enabled")
+    }
+
+    /**
+     * Same CE -> device-protected mirror for the auto-apply-modules switch.
+     * The HZIJ chain starts from LOCKED_BOOT_COMPLETED, before CE storage is
+     * readable, so this value must exist in the DP copy to honour it there.
+     */
+    fun mirrorAutoApplyModulesToDeviceProtected(context: Context) {
+        val enabled = runCatching {
+            prefs(context).getBoolean(AUTO_APPLY_MODULES, false)
+        }.getOrDefault(false)
+        runCatching {
+            deviceProtectedPrefs(context).edit()
+                .putBoolean(AUTO_APPLY_MODULES, enabled)
+                .apply()
+        }
+        android.util.Log.i("AppPreferences", "autoApplyModules DP mirror: $enabled")
     }
 
     fun adbPaired(context: Context): Boolean =

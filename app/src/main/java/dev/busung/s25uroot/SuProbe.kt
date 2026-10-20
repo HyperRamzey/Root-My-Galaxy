@@ -1,8 +1,6 @@
 package dev.busung.s25uroot
 
 import android.util.Log
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
 /**
@@ -29,32 +27,39 @@ object SuProbe {
 
     fun isActive(): Boolean {
         lastFailure = Failure.NONE
+        var process: Process? = null
         return try {
-            val process = ProcessBuilder("su", "-c", "id")
+            val proc = ProcessBuilder("su", "-c", "id")
                 .redirectErrorStream(true)
                 .start()
-            val output = StringBuilder()
-            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    output.append(line).append('\n')
-                }
-            }
-            val finished = process.waitFor(3, TimeUnit.SECONDS)
+            process = proc
+            // Wait before draining stdout: a su that never exits (manager
+            // prompt, dead socket) would otherwise block readLine() forever and
+            // the 3 s timeout below would never be reached. The `id` output is
+            // tiny, so it cannot fill the pipe while we wait.
+            val finished = proc.waitFor(3, TimeUnit.SECONDS)
             if (!finished) {
-                process.destroyForcibly()
+                proc.destroyForcibly()
+                runCatching { proc.waitFor(1, TimeUnit.SECONDS) }
+                runCatching { proc.inputStream.close() }
                 lastFailure = Failure.ERROR
+                Log.d(TAG, "su probe timed out")
                 return false
             }
-            val ok = process.exitValue() == 0 &&
-                output.contains("uid=0")
-            Log.d(TAG, "su probe: exit=${process.exitValue()} ok=$ok")
+            val output = proc.inputStream.bufferedReader().use { it.readText() }
+            val exit = proc.exitValue()
+            val ok = exit == 0 && output.contains("uid=0")
+            Log.d(TAG, "su probe: exit=$exit ok=$ok")
             if (!ok) lastFailure = Failure.DENIED
             ok
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            process?.destroyForcibly()
+            lastFailure = Failure.ERROR
+            Log.d(TAG, "su probe interrupted")
+            false
         } catch (t: Throwable) {
-            // IOException at start = no su visible to this uid. KernelSU's
-            // sucompat only answers callers it allows (manager/shell); a
-            // non-manager app sees ENOENT/EACCES here.
+            process?.destroyForcibly()
             Log.d(TAG, "su probe unavailable: ${t.javaClass.simpleName}")
             lastFailure = Failure.ABSENT
             false

@@ -299,6 +299,15 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 RootStatusProbe.storeBootReceipt(app)
                 AppPreferences.setBootRunFailed(app, false)
                 finishHistory(InstallRunResult.Succeeded)
+                autoApplyHzijModulesIfEnabled()
+            }
+            DirtyFragRunner.Outcome.AlreadyActive -> {
+                setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
+                appendLog("[*] DirtyFrag is already active this boot; not re-arming the kernel")
+                RootStatusProbe.storeBootReceipt(app)
+                AppPreferences.setBootRunFailed(app, false)
+                finishHistory(InstallRunResult.Succeeded)
+                autoApplyHzijModulesIfEnabled()
             }
             is DirtyFragRunner.Outcome.Failed -> {
                 error("HZIJ DirtyFrag failed: ${outcome.message}")
@@ -307,6 +316,23 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 error("HZIJ DirtyFrag not applicable on this device")
             }
         }
+    }
+
+    /**
+     * HZIJ installs have root but no ADB session, so the normal
+     * applyModulesViaAdb() path cannot run. Drive the same ksud lifecycle
+     * through su when the user enabled auto-apply. The soft reboot kills the
+     * app by design; the boot-id marker stops a repeat after it returns.
+     */
+    private fun autoApplyHzijModulesIfEnabled() {
+        if (!AppPreferences.autoApplyModules(app)) return
+        if (HzijModuleActivator.appliedThisBoot(app)) {
+            appendLog("[*] Modules already applied this boot; skipping automatic soft reboot")
+            return
+        }
+        appendLog("[*] Auto-apply modules enabled; starting ksud lifecycle")
+        val started = HzijModuleActivator.apply(app, report = { line -> appendLog("[*] $line") })
+        if (!started) appendLog("[-] automatic module activation did not start")
     }
 
     private suspend fun executeExploit(adb: WirelessAdbSession, payloads: VerifiedPayloads) {
@@ -457,6 +483,16 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         if (installJob?.isActive == true) return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                if (DirtyFragRunner.isHzijDevice()) {
+                    appendLog(app.getString(R.string.log_modules_applying))
+                    val started = HzijModuleActivator.apply(
+                        app,
+                        { line -> appendLog("[*] $line") },
+                        force = true,
+                    )
+                    if (!started) appendLog("[-] module activation did not start")
+                    return@launch
+                }
                 val adb = WirelessAdbSession.open(app)
                 applyModulesViaAdb(adb, force = true)
                 adb.close()
@@ -590,6 +626,18 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 appendLog(app.getString(R.string.log_modules_applying))
+                if (DirtyFragRunner.isHzijDevice()) {
+                    val started = HzijModuleActivator.apply(
+                        app,
+                        { line -> appendLog("[*] $line") },
+                        force = true,
+                    )
+                    appendLog(
+                        if (started) "[+] soft-reboot triggered"
+                        else "[-] soft-reboot did not start",
+                    )
+                    return@launch
+                }
                 val adb = WirelessAdbSession.open(app)
                 applyModulesViaAdb(adb, force = true)
                 // also log that soft-reboot was manually triggered

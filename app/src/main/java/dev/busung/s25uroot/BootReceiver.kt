@@ -51,6 +51,7 @@ class BootReceiver : BroadcastReceiver() {
             // CE storage is readable now; refresh the device-protected copy
             // for the next boot's early receiver.
             AppPreferences.mirrorAutoRootOnBootToDeviceProtected(context)
+            AppPreferences.mirrorAutoApplyModulesToDeviceProtected(context)
         }
         if (!AppPreferences.adbPaired(context) && !DirtyFragRunner.isHzijDevice()) {
             // Silent return here made post-reinstall boots undiagnosable:
@@ -68,8 +69,18 @@ class BootReceiver : BroadcastReceiver() {
         }
 
         if (RootStatusProbe.isRootLiveThisBoot(context)) {
-            // KernelSU is already live this boot; nothing to restore.
-            return
+            // KernelSU is already live this boot. The one exception is the
+            // HZIJ chain that rooted at LOCKED_BOOT_COMPLETED: its
+            // auto-apply check can run before the CE -> DP mirror exists on
+            // an upgraded install. After unlock (BOOT_COMPLETED or a later
+            // alarm retry) the mirror has been refreshed, so start the
+            // (root-live no-op) service to apply once for this boot.
+            val needsHzijModuleApply = !isLockedBoot &&
+                DirtyFragRunner.isHzijDevice() &&
+                AppPreferences.autoApplyModules(context) &&
+                !HzijModuleActivator.appliedThisBoot(context)
+            if (!needsHzijModuleApply) return
+            Log.i(TAG, "root live; starting service to apply HZIJ modules once")
         }
 
         // Schedule first: a crashed/denied start below must never leave

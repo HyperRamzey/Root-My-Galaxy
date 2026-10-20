@@ -184,12 +184,6 @@ class RootOnBootService : Service() {
     }
 
     private fun runRootOnBootLocked() {
-        if (RootStatusProbe.isRootLiveThisBoot(this)) {
-            // Already rooted this boot (manual run or earlier retry): keep
-            // the alarm retries harmless and report success immediately.
-            AppPreferences.setBootRetryCount(this, 0)
-            return
-        }
         val started = System.currentTimeMillis()
         fun running(stage: String, lastLine: String = "", etaMs: Long = -1) {
             // Stage transitions join the shared live log so the expanded
@@ -210,6 +204,33 @@ class RootOnBootService : Service() {
             updateNotification("$stage${if (lastLine.isNotBlank()) " — $lastLine" else ""}")
         }
 
+        /**
+         * HZIJ has no ADB session; drive the same ksud lifecycle over su.
+         * prefs() selects device-protected storage while the user is locked,
+         * so the receiver's DP mirror is what makes auto-apply visible here.
+         * The activator records the boot id before the soft reboot, which
+         * keeps the post-reboot BOOT_COMPLETED from applying again.
+         */
+        fun maybeAutoApplyHzijModules() {
+            if (!DirtyFragRunner.isHzijDevice()) return
+            if (!AppPreferences.autoApplyModules(this)) return
+            if (HzijModuleActivator.appliedThisBoot(this)) return
+            running("DirtyFrag", "applying modules (soft reboot)")
+            val moduleStarted = HzijModuleActivator.apply(this, report = { line ->
+                running("DirtyFrag", line)
+            })
+            if (!moduleStarted) running("DirtyFrag", "module activation did not start")
+        }
+
+        if (RootStatusProbe.isRootLiveThisBoot(this)) {
+            // Already rooted this boot (manual run or earlier retry): keep
+            // the alarm retries harmless. On HZIJ, this is also the path that
+            // honours auto-apply if the chain ran outside this service.
+            AppPreferences.setBootRetryCount(this, 0)
+            maybeAutoApplyHzijModules()
+            return
+        }
+
         running(getString(R.string.boot_stage_connecting))
 
         // HZIJ-only fast path: the stock DirtyFrag chain runs in-process,
@@ -223,6 +244,15 @@ class RootOnBootService : Service() {
                     AppPreferences.setBootRetryCount(this, 0)
                     BootReceiver.cancelRetryAlarms(this)
                     running("DirtyFrag", "rooted (chain ${outcome.code})")
+                    maybeAutoApplyHzijModules()
+                    return
+                }
+                is DirtyFragRunner.Outcome.AlreadyActive -> {
+                    RootStatusProbe.storeBootReceipt(this)
+                    AppPreferences.setBootRetryCount(this, 0)
+                    BootReceiver.cancelRetryAlarms(this)
+                    running("DirtyFrag", "already active")
+                    maybeAutoApplyHzijModules()
                     return
                 }
                 is DirtyFragRunner.Outcome.Failed -> {
