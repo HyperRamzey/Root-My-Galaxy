@@ -220,6 +220,15 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             )
             startHistory()
             try {
+                // HZIJ has a self-contained DirtyFrag chain (stock
+                // libdfroot.so + android13-5.15 module). Run it before the
+                // ADB gate and before any CVE-2026-43499 staging so this
+                // firmware never falls through to the slow ADB path.
+                if (DirtyFragRunner.isHzijDevice()) {
+                    installHzij()
+                    return@launch
+                }
+
                 // Gate: wireless ADB must be available before anything else.
                 appendLog(app.getString(R.string.log_adb_connecting))
                 val adb = WirelessAdbSession.open(app)
@@ -269,6 +278,33 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
                 setPhase(InstallPhase.Failed, app.getString(R.string.status_install_failed))
                 if (isPairingLost(error)) AppPreferences.setAdbPaired(app, false)
                 finishHistory(InstallRunResult.Failed)
+            }
+        }
+    }
+
+    /**
+     * Manual-install equivalent of the HZIJ boot branch. The same
+     * DirtyFragRunner is used, so device checks, staging, `--allow-shell`
+     * and the success criteria are identical to RootOnBootService.
+     */
+    private fun installHzij() {
+        appendLog("[*] ${android.os.Build.MODEL} / ${android.os.Build.DISPLAY}: HZIJ DirtyFrag path")
+        updateHistoryProfile("hzij-dirtyfrag")
+        setPhase(InstallPhase.Exploiting, app.getString(R.string.status_exploit_running))
+        when (val outcome = DirtyFragRunner.run(app) { line -> appendLog(line) }) {
+            is DirtyFragRunner.Outcome.Rooted -> {
+                setPhase(InstallPhase.Installed, app.getString(R.string.status_ksu_active))
+                appendLog(app.getString(R.string.log_install_complete))
+                appendLog("[*] DirtyFrag chain code ${outcome.code}; ${DirtyFragRunner.ARMED_MARKER} present")
+                RootStatusProbe.storeBootReceipt(app)
+                AppPreferences.setBootRunFailed(app, false)
+                finishHistory(InstallRunResult.Succeeded)
+            }
+            is DirtyFragRunner.Outcome.Failed -> {
+                error("HZIJ DirtyFrag failed: ${outcome.message}")
+            }
+            DirtyFragRunner.Outcome.NotApplicable -> {
+                error("HZIJ DirtyFrag not applicable on this device")
             }
         }
     }

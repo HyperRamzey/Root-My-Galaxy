@@ -45,12 +45,24 @@ class RootOnBootService : Service() {
         // otherwise the system raises ForegroundServiceDidNotStartInTime and
         // crashes the app in a loop (observed on alarm retries).
         startInForeground()
+        // A LOCKED_BOOT_COMPLETED start is allowed only for the HZIJ
+        // in-process chain. The CVE/ADB path needs the user unlocked and the
+        // activity foregrounded, so reject it here for other builds.
+        val userUnlocked = getSystemService(android.os.UserManager::class.java)
+            ?.isUserUnlocked != false
+        if (!userUnlocked && !DirtyFragRunner.isHzijDevice()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // Single-instance guard: BOOT_COMPLETED plus the alarm retries must
         // never run two pipelines concurrently - overlapping exploits,
         // late-loads or zygote kills destabilize the device (observed
-        // soft-reboot loops).
+        // soft-reboot loops). A duplicate start (the normal BOOT_COMPLETED
+        // can arrive while the locked-boot chain is still running) must
+        // enter the foreground but must NOT stop the service that owns the
+        // active pipeline.
         if (!RUNNING.compareAndSet(false, true)) {
-            stopSelf()
             return START_NOT_STICKY
         }
         // Fresh timeline per pipeline run (notification + app console).
@@ -199,6 +211,31 @@ class RootOnBootService : Service() {
         }
 
         running(getString(R.string.boot_stage_connecting))
+
+        // HZIJ-only fast path: the stock DirtyFrag chain runs in-process,
+        // without wireless debugging. Its daemon and setup script live in the
+        // app's device-protected data directory; the kernel helper does the
+        // privileged half. Every other build keeps the existing ADB chain.
+        if (DirtyFragRunner.isHzijDevice()) {
+            when (val outcome = DirtyFragRunner.run(this) { line -> running("DirtyFrag", line) }) {
+                is DirtyFragRunner.Outcome.Rooted -> {
+                    RootStatusProbe.storeBootReceipt(this)
+                    AppPreferences.setBootRetryCount(this, 0)
+                    BootReceiver.cancelRetryAlarms(this)
+                    running("DirtyFrag", "rooted (chain ${outcome.code})")
+                    return
+                }
+                is DirtyFragRunner.Outcome.Failed -> {
+                    // HZIJ must root through DirtyFrag. Falling through to the
+                    // CVE-2026-43499 ADB chain both violates that contract and
+                    // spends minutes in an exploit that cannot produce the fast
+                    // path on this build. Fail loudly instead of faking a run.
+                    running("DirtyFrag", "failed — ${outcome.message}")
+                    error("DirtyFrag failed on HZIJ: ${outcome.message}")
+                }
+                DirtyFragRunner.Outcome.NotApplicable -> Unit
+            }
+        }
 
         // 1-3. Enable wireless debugging, discover port, connect (shared session).
         var adb = WirelessAdbSession.open(this)

@@ -35,11 +35,24 @@ import android.util.Log
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val retryIndex = intent.getIntExtra(EXTRA_RETRY, 0)
+        val isLockedBoot = intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
         val isBoot = intent.action == Intent.ACTION_BOOT_COMPLETED
-        if (!isBoot && intent.action != ACTION_RETRY) return
-        if (retryIndex == 0 && !isBoot) return
-        if (!AppPreferences.autoRootOnBoot(context)) return
-        if (!AppPreferences.adbPaired(context)) {
+        if (!isBoot && !isLockedBoot && intent.action != ACTION_RETRY) return
+        if (retryIndex == 0 && !isBoot && !isLockedBoot) return
+        if (!AppPreferences.autoRootOnBoot(context)) {
+            Log.i(TAG, "auto-root disabled; ignoring ${intent.action}")
+            return
+        }
+        // The locked broadcast exists to start the HZIJ in-process chain
+        // before the user unlocks. Other devices still use the post-unlock
+        // ADB/CVE pipeline and must not start it in direct boot.
+        if (isLockedBoot && !DirtyFragRunner.isHzijDevice()) return
+        if (!isLockedBoot) {
+            // CE storage is readable now; refresh the device-protected copy
+            // for the next boot's early receiver.
+            AppPreferences.mirrorAutoRootOnBootToDeviceProtected(context)
+        }
+        if (!AppPreferences.adbPaired(context) && !DirtyFragRunner.isHzijDevice()) {
             // Silent return here made post-reinstall boots undiagnosable:
             // nothing ran, nothing was logged, the UI kept saying ready.
             // Record why so MainActivity renders it and the user knows to
@@ -67,6 +80,7 @@ class BootReceiver : BroadcastReceiver() {
             scheduleRetry(context, 3)
         }
 
+        Log.i(TAG, "starting RootOnBootService (lockedBoot=$isLockedBoot)")
         val serviceIntent = Intent(context, RootOnBootService::class.java)
         val started = runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

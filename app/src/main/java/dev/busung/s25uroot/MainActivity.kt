@@ -232,6 +232,9 @@ class MainActivity : ComponentActivity() {
         }
         requestBatteryOptimizationExemption()
         requestNotificationPermissionIfNeeded()
+        // CE storage is readable in the activity; seed the device-protected
+        // copy that the LOCKED_BOOT_COMPLETED receiver reads on the next boot.
+        AppPreferences.mirrorAutoRootOnBootToDeviceProtected(this)
         accentColor = AppPreferences.accentColor(this)
         themeMode = AppPreferences.themeMode(this)
         advancedMode = AppPreferences.advancedMode(this)

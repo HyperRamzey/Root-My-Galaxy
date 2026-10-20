@@ -3,6 +3,7 @@ package dev.busung.s25uroot
 import android.app.LocaleManager
 import android.content.Context
 import android.os.LocaleList
+import android.os.UserManager
 
 enum class AccentColor(val storedValue: String) {
     Dynamic("dynamic"),
@@ -86,6 +87,34 @@ object AppPreferences {
         prefs(context).edit()
             .putBoolean(AUTO_ROOT_BOOT, enabled)
             .apply()
+        // The LOCKED_BOOT_COMPLETED receiver runs before the credential-
+        // protected storage is readable; keep the device-protected mirror in
+        // sync every time the user changes the switch.
+        runCatching {
+            deviceProtectedPrefs(context).edit()
+                .putBoolean(AUTO_ROOT_BOOT, enabled)
+                .apply()
+        }
+    }
+
+    /**
+     * Copies the user's auto-root choice into device-protected storage.
+     *
+     * The fast HZIJ path is started from LOCKED_BOOT_COMPLETED, where CE
+     * SharedPreferences are not readable yet. Call this after the user
+     * unlocks (MainActivity startup, normal BOOT_COMPLETED) so the next boot
+     * can take the early path.
+     */
+    fun mirrorAutoRootOnBootToDeviceProtected(context: Context) {
+        val enabled = runCatching {
+            prefs(context).getBoolean(AUTO_ROOT_BOOT, false)
+        }.getOrDefault(false)
+        runCatching {
+            deviceProtectedPrefs(context).edit()
+                .putBoolean(AUTO_ROOT_BOOT, enabled)
+                .apply()
+        }
+        android.util.Log.i("AppPreferences", "autoRootOnBoot DP mirror: $enabled")
     }
 
     fun adbPaired(context: Context): Boolean =
@@ -137,8 +166,22 @@ object AppPreferences {
             .commit()
     }
 
-    private fun prefs(context: Context) =
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    /**
+     * Before the user unlocks, CE SharedPreferences are unavailable and
+     * throw IllegalStateException. Direct-boot receivers/services still need
+     * to read the auto-root switch and boot markers, so use the device-
+     * protected copy transparently in that window.
+     */
+    private fun prefs(context: Context): android.content.SharedPreferences {
+        val unlocked = context.getSystemService(UserManager::class.java)
+            ?.isUserUnlocked != false
+        val target = if (unlocked) context else context.createDeviceProtectedStorageContext()
+        return target.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    }
+
+    private fun deviceProtectedPrefs(context: Context): android.content.SharedPreferences =
+        context.createDeviceProtectedStorageContext()
+            .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     fun languageTag(context: Context): String {
         val locales = context.getSystemService(LocaleManager::class.java).applicationLocales

@@ -54,23 +54,48 @@ object RootStatusProbe {
             java.io.File("/proc/sys/kernel/random/boot_id")
                 .readText(java.nio.charset.StandardCharsets.US_ASCII).trim()
         }.getOrNull() ?: return false
-        val receipt = context.getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
+        // LOCKED_BOOT_COMPLETED runs before CE storage exists; the early
+        // DirtyFrag run writes the device-protected receipt. Check it first,
+        // then fall back to the credential-protected copy used by the UI.
+        val dp = runCatching {
+            context.createDeviceProtectedStorageContext()
+                .getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
+        }.getOrNull()
+        if (dp?.getString("kernel_boot_id", null) == bootToken &&
+            dp?.getBoolean("verified", false) == true
+        ) {
+            return true
+        }
+        val receipt = runCatching {
+            context.getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
+        }.getOrNull() ?: return false
         return receipt.getString("kernel_boot_id", null) == bootToken &&
             receipt.getBoolean("verified", false)
     }
 
     /** Persist "root verified for THIS boot" after a successful apply so
-     * later gates survive probe races. Called from the pipeline. */
+     * later gates survive probe races. Called from the pipeline. The device-
+     * protected copy is the one the early boot receiver can read. */
     fun storeBootReceipt(context: android.content.Context) {
         val bootToken = runCatching {
             java.io.File("/proc/sys/kernel/random/boot_id")
                 .readText(java.nio.charset.StandardCharsets.US_ASCII).trim()
         }.getOrNull() ?: return
-        context.getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
-            .edit()
-            .putString("kernel_boot_id", bootToken)
-            .putBoolean("verified", true)
-            .apply()
+        runCatching {
+            context.createDeviceProtectedStorageContext()
+                .getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString("kernel_boot_id", bootToken)
+                .putBoolean("verified", true)
+                .apply()
+        }
+        runCatching {
+            context.getSharedPreferences("install_receipt", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putString("kernel_boot_id", bootToken)
+                .putBoolean("verified", true)
+                .apply()
+        }
     }
 
     /** Last known-positive result, sticky across calls. */
