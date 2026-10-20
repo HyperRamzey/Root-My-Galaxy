@@ -34,7 +34,9 @@ from the build display, which is shared across builds:
 
 `F946BXXS7GZE5` and `F946BXXS7GZH2` are both SM-F946B on kernel `5.15.189`, so
 model and kernel alone cannot separate them even though their payload offsets
-differ. A feed entry may therefore carry an optional `firmwareVersions` array:
+differ. The Fold5 line now spans two kernel generations: those two builds on
+`5.15.189`, and `F946BXXU7HZIJ` (One UI 9 / Android 17) on `5.15.194`. A feed
+entry may therefore carry an optional `firmwareVersions` array:
 
 - One entry is a **hard pin**. The payload is rejected on any other firmware.
 - Two or more entries mean the payload is known-good on each, so it is merely
@@ -54,10 +56,11 @@ be overridden; a wrong-firmware payload is a known-bad pairing.
   with `url` + `size`).
 - Every download is validated against the feed-declared size; a size
   change invalidates the local cache and forces a re-download.
-- Bundled fallbacks ship inside the APK
-  (`app/src/main/jniLibs/arm64-v8a/libcve43499app.so`,
-  `libcve43499root.so`) so the app can stage payloads even before the
-  first feed fetch succeeds.
+- Bundled fallbacks ship inside the APK as profile-qualified jniLibs
+  (`libcve43499app-<profile>.so`, `libcve43499root-<profile>.so`) so the app
+  can stage the correct payload even before the first feed fetch succeeds.
+  The legacy generic `libcve43499app.so` / `libcve43499root.so` remain as a
+  fallback only.
 
 ### KernelSU manager
 

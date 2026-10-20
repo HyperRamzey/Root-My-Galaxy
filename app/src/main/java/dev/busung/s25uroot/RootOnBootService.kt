@@ -374,7 +374,9 @@ class RootOnBootService : Service() {
             // argv[1..4] and has no getopt, so a flag would be a silent no-op
             // until the payload repo adds a consumer.
             append("RMG_FIRMWARE=${snapshot.firmware.orEmpty()} ")
-            append("SLIDE_SOURCE=tracefs ")
+            // Honour the profile's slide source; tracefs is the historical
+            // default for every shipped Fold5 profile.
+            append("SLIDE_SOURCE=${profile.slideSource ?: "tracefs"} ")
             // Reboot-per-3-attempts policy (2026-08-27, per user): each boot
             // gets 3 pin-gated attempts, then the ladder reboots for a fresh
             // kernel/allocator state. The payload pin-gate re-validates the

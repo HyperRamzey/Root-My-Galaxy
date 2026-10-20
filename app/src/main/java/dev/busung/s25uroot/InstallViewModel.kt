@@ -57,6 +57,9 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
      * work dir was unwritable (anti-log addon wipe); installKernelSu then
      * heals + stages ksud instead of assuming the classic pushes. */
     private var lastLaunchWasFallback = false
+    /** Device path of the runner used by the last exploit; late-load must
+     * use the SAME profile-specific helper, never the generic legacy lib. */
+    private var lastRemoteHelper: String? = null
     val state: StateFlow<InstallUiState> = mutableState.asStateFlow()
     val history: StateFlow<List<InstallHistoryEntry>> = mutableHistory.asStateFlow()
     val targetCatalog: StateFlow<TargetCatalogUiState> = mutableTargetCatalog.asStateFlow()
@@ -286,11 +289,13 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         val remotePayload = launch.payloadPath
         val remoteHelper = launch.helperPath
         val remoteLog = launch.logPath
+        lastRemoteHelper = remoteHelper
 
         if (launch.workDirHealthy) {
             adb.remove(remoteLog)
             adb.push(payload, remotePayload, executable = true)
-            val helperSource = payloads.rootHelper ?: nativeHelperFile()
+            val helperSource = payloads.rootHelper
+                ?: ExploitStaging.bundledHelper(app, profile.profileId)
             adb.push(helperSource, remoteHelper, executable = true)
         } else {
             ExploitStaging.prepareLogDir(adb, remoteLog)
@@ -373,7 +378,19 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
         // Verify KernelSU is loaded; if not, try late-load explicitly.
         val ksuCheck = adb.shell("grep -i kernelsu /proc/modules 2>/dev/null")
         if (!ksuCheck.output.contains("kernelsu")) {
-            val lateLoad = adb.shell("${nativeHelperFile().absolutePath} --late-load")
+            // Re-use the exact runner the exploit just used: a fallback HZIJ
+            // install must late-load with HZIJ's helper/KDP, not the generic
+            // legacy jniLib. If the exploit's work-dir hygiene removed that
+            // staged file, fall back to the same profile-qualified jniLib.
+            val helperUsable = lastRemoteHelper?.let { path ->
+                runCatching {
+                    adb.shell("test -x '$path' && echo RMG_HELPER_OK")
+                        .output.contains("RMG_HELPER_OK")
+                }.getOrDefault(false)
+            } == true
+            val lateLoadHelper = lastRemoteHelper?.takeIf { helperUsable }
+                ?: ExploitStaging.bundledHelper(app, payloads.profile.profileId).absolutePath
+            val lateLoad = adb.shell("$lateLoadHelper --late-load")
             require(lateLoad.exitCode == 0) {
                 app.getString(R.string.error_ksu_verify, lateLoad.exitCode, lateLoad.output)
             }
@@ -608,8 +625,6 @@ class InstallViewModel(application: Application) : AndroidViewModel(application)
             .putString(P0_CACHE_OFFSET, value)
             .apply()
     }
-
-    private fun nativeHelperFile() = File(app.applicationInfo.nativeLibraryDir, "libcve43499root.so")
 
     private fun publishExploitLog(prefix: String, rawLog: String) {
         mutableState.value = mutableState.value.copy(
